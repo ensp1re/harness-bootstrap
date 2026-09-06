@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "harness-bootstrap-eval",
+  "runtime": "python3",
+  "files": {
+    "scripts/harness.py": {"sha256": "pending"},
+    "scripts/check_harness.py": {"sha256": "pending"}
+  }
+}

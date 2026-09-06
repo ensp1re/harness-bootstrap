@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "checks": [
+    {
+      "id": "harness_validate",
+      "argv": ["python3", "scripts/check_harness.py"],
+      "cwd": ".",
+      "timeoutSeconds": 10,
+      "required": true
+    }
+  ],
+  "fingerprintPaths": [
+    "AGENTS.md",
+    "README.md",
+    "pyproject.toml",
+    "scripts/harness.py",
+    "scripts/check_harness.py",
+    "docs/harness/GOALS.md",
+    "docs/harness/PLANS.md",
+    "docs/harness/ARCHITECTURE.md",
+    "docs/harness/RELIABILITY.md",
+    "docs/harness/SECURITY.md",
+    "docs/harness/config.json",
+    "docs/harness/tasks.json"
+  ],
+  "delivery": {
+    "required": false,
+    "provider": "local"
+  }
+}

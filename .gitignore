@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+evals/fixtures/**/docs/harness/.lock
+evals/fixtures/**/docs/harness/runs/

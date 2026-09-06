@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "cases": [
+    {
+      "case": "baseline",
+      "passed": true,
+      "exit": 0,
+      "details": null
+    },
+    {
+      "case": "failed-check",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "missing-executable",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "empty-verification",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "verified-dependency",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "stale-acceptance",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "stale-config",
+      "passed": true,
+      "exit": 1,
+      "details": null
+    },
+    {
+      "case": "handoff-preserves-decisions",
+      "passed": true,
+      "exit": 0,
+      "details": null
+    }
+  ]
+}

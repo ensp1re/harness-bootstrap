@@ -1,0 +1,26 @@
+# Security
+
+## Scope and trust boundaries
+
+List the actors, local processes, containers or workers, repositories, services, and data stores involved. Mark every boundary where an untrusted input or credential crosses.
+
+## Secrets and sensitive data
+
+- Allowed secret sources:
+- Redaction rules for logs, evidence, plans, and pull requests:
+- Credential lifetime and cleanup:
+- Data that must never be copied into a worktree or artifact:
+
+Never place credentials, private keys, or production data in generated documents. Keep command output and agent observations subject to the same redaction rule as application logs.
+
+## Authorization and destructive actions
+
+Describe who can approve writes, deploys, migrations, data deletion, force pushes, or other irreversible actions. Require an explicit, reviewable step for destructive operations and record the actor and evidence.
+
+## Isolation
+
+State whether a branch, Git worktree, container, or remote worker provides isolation. A worktree isolates source changes but does not isolate processes, network access, credentials, ignored files, or external services.
+
+## Verification
+
+List security checks, failure handling, and the evidence required before review. Link to [{{RELIABILITY_PATH}}]({{RELIABILITY_PATH}}) for recovery behavior and to [{{PROJECT_SPEC_PATH}}]({{PROJECT_SPEC_PATH}}) for data-handling requirements.

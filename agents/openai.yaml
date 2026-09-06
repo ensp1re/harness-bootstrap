@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness Bootstrap"
+  short_description: "Build a portable, verifiable repository harness"
+  default_prompt: "Use $harness-bootstrap to create a tailored development harness for this repository from my project description."

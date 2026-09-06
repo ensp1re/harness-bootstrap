@@ -1,0 +1,32 @@
+# Delivery plan
+
+## Objective
+
+State the one outcome this plan delivers and link to [{{PROJECT_SPEC_PATH}}]({{PROJECT_SPEC_PATH}}) when the project has a specification.
+
+## State
+
+- Status: `not_started`
+- Current task ID:
+- Active slice:
+- Base branch: `{{DEFAULT_BRANCH}}`
+- Tracking record: [{{TRACKING_PATH}}]({{TRACKING_PATH}})
+- Current handoff: [{{HANDOFF_PATH}}]({{HANDOFF_PATH}})
+
+## Slices
+
+| ID | Slice and expected behavior | Dependencies | Verification evidence | Status |
+| --- | --- | --- | --- | --- |
+| 1 |  |  |  | not_started |
+
+Keep exactly one task `active`. Each slice must have an observable result and a verification command or artifact before it starts. Use only `not_started`, `active`, `blocked`, `verified`, and `passing` for task state.
+
+## Checkpoints
+
+At each checkpoint, record the decision, changed files, verification command and exit status, remaining risk, and the next slice. A failed check moves the slice back to `active` and records the failure.
+
+## Closeout
+
+The plan is complete only after local verification, a draft GitHub PR, required CI checks, the final commit and PR URL, and the corresponding tracking and handoff updates are recorded.
+
+Push and PR actions require authorization in the current task; preserve any authorization already given. Use the documented harness deliver command to record actual remote/CI evidence.

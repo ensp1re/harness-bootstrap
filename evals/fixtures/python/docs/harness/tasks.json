@@ -1,0 +1,64 @@
+{
+  "nextId": 3,
+  "schemaVersion": 1,
+  "tasks": [
+    {
+      "acceptance": [
+        "An independent product check demonstrates the documented CSV header behavior."
+      ],
+      "behavior": "A Python CLI checks whether a CSV header matches the requested header contract.",
+      "blockedReason": null,
+      "delivery": null,
+      "dependsOn": [],
+      "evidence": null,
+      "id": "F001",
+      "plan": "docs/harness/PLANS.md",
+      "spec": "docs/harness/GOALS.md",
+      "state": "not_started",
+      "verification": []
+    },
+    {
+      "acceptance": [
+        "The native harness plumbing check exits successfully."
+      ],
+      "behavior": "The generated Python harness validates its own state and can be resumed from a handoff.",
+      "blockedReason": null,
+      "delivery": null,
+      "dependsOn": [],
+      "evidence": {
+        "acceptanceMap": {
+          "The native harness plumbing check exits successfully.": "check:harness_validate"
+        },
+        "attemptId": "c095adce0e9f4c82a52b869144964c7d",
+        "checks": [
+          {
+            "argv": [
+              "python3",
+              "scripts/check_harness.py"
+            ],
+            "cwd": ".",
+            "durationMs": 21,
+            "exitCode": 0,
+            "id": "harness_validate",
+            "logPath": "docs/harness/runs/c095adce0e9f4c82a52b869144964c7d-harness_validate.log",
+            "status": "passed",
+            "timedOut": false
+          }
+        ],
+        "fingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
+        "fresh": true,
+        "postFingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
+        "preFingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
+        "recordedAt": "2026-09-06T17:43:05Z",
+        "status": "passed"
+      },
+      "id": "F002",
+      "plan": "docs/harness/PLANS.md",
+      "spec": "docs/harness/GOALS.md",
+      "state": "verified",
+      "verification": [
+        "harness_validate"
+      ]
+    }
+  ]
+}
