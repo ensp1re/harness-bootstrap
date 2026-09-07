@@ -49,6 +49,8 @@ Record implementation revision separately from the state-only closeout revision.
 
 ## Native tests required
 
+Place generated test files directly in `tests/`, without a harness subdirectory. Preserve existing repository tests.
+
 Test malformed inputs; legal/illegal transitions; duplicate IDs; cycles; unsatisfied dependencies; one active task; no checks; missing executable; failing/timeout/interrupted checks; post-verification source/requirement/config changes; changes during verification; preserved handoff prose; interrupted writes; archived dependencies; rerun preservation; missing git/remote/auth; CI failure and successful implementation plus bookkeeping closeout. Fixtures must simulate external delivery, never publish for a test.
 
 ## Readiness report

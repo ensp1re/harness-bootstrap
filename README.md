@@ -20,8 +20,8 @@ $harness-bootstrap
 Bootstrap a harness for [your project description]. Preserve [existing constraints] and queue the first product task.
 ```
 
-Generated documents and state files live directly in `docs/`; native tooling lives directly in
-`scripts/`. Neither location gets an extra harness subdirectory.
+Generated documents and state files live directly in `docs/`, native tooling in `scripts/`, and
+tests in `tests/`. None of these locations gets an extra harness subdirectory.
 The generated repository owns its runner and remains usable when this skill is not installed.
 The normative command, state, evidence, freshness, handoff, and GitHub delivery contract is in
 [`references/contract.md`](references/contract.md). The template map is in
