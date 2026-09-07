@@ -8,7 +8,7 @@ Keep this file current-only and restartable.
 - Active slice: None
 - Branch or worktree: Unavailable
 - Base commit: Unavailable
-- Tracking: `docs/harness/tasks.json`
+- Tracking: `docs/tasks.json`
 
 ## Completed
 

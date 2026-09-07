@@ -16,7 +16,7 @@ This first version integrates GitHub delivery; other hosts are reported as unsup
 
 ## Generate and reconcile
 
-Read [the contract](references/contract.md) and use [the template map](assets/templates/README.md) as adaptable source material. Choose existing canonical paths where available; otherwise use `docs/harness/` for state/config and `scripts/harness/` for native tooling.
+Read [the contract](references/contract.md) and use [the template map](assets/templates/README.md) as adaptable source material. Put generated documents and state/config files directly in `docs/`, and native tooling directly in `scripts/`. Do not create a harness subdirectory in either location. Preserve existing canonical files and reconcile naming conflicts without overwriting user content.
 
 Generate a compact AGENTS router, product/architecture facts, live queue, current handoff, reliability/security instructions and initial bounded plan. Create change records only for substantial behavior changes. Small tasks need a queue entry, not a document ceremony. Include only non-obvious rules and useful routing; omit speculative background and duplicate instructions.
 

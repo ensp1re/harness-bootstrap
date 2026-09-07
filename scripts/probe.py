@@ -16,7 +16,7 @@ def main():
     if not runner:
         parser.error('provide a runner after --')
     root = Path(args.root).resolve()
-    path = root / 'docs/harness/tasks.json'
+    path = root / 'docs/tasks.json'
     original = path.read_bytes()
     state = json.loads(original)
     outcomes = []

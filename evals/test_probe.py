@@ -12,7 +12,7 @@ class ProbeTest(unittest.TestCase):
     def test_always_success_runner_is_rejected_and_state_restored(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            state = root / 'docs/harness/tasks.json'
+            state = root / 'docs/tasks.json'
             state.parent.mkdir(parents=True)
             original = b'{"schemaVersion":1,"nextId":2,"tasks":[{"id":"F001"}]}\n'
             state.write_bytes(original)
@@ -29,7 +29,7 @@ class ProbeTest(unittest.TestCase):
     def test_crashed_runner_restores_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            state = root / 'docs/harness/tasks.json'
+            state = root / 'docs/tasks.json'
             state.parent.mkdir(parents=True)
             original = b'{"schemaVersion":1,"nextId":1,"tasks":[]}\n'
             state.write_bytes(original)

@@ -7,7 +7,7 @@ This is the shared behavior of native implementations, not a mandate to introduc
 Document a runner command whose arguments follow: `RUNNER --root PATH COMMAND [arguments]`.
 Support `context`, `tasks`, `validate`, `verify ID`, `handoff`, `archive ID [--dry-run]`, `deliver ID [--dry-run]`, and `transition ID STATE`. Commands emit one JSON object on stdout; diagnostics/logs go to stderr or referenced files. Use exit 0 for success, 1 for failed checks/blocked transition, 2 for invalid input. Resolve every stored relative path within root; reject absolute paths, traversal and symlink escapes for harness-owned writes. Run with the supplied root, never the caller's directory.
 
-All default paths are relative to the supplied repository root: `docs/harness/config.json`, `docs/harness/tasks.json`, `docs/harness/handoff.json`, `docs/harness/install.json`, `docs/harness/runs/`, and `docs/harness/archive/`. Existing repository paths may override these through the runner's documented configuration discovery. Probe fixtures use the defaults. Reject unsupported schema versions without mutation.
+All default paths are relative to the supplied repository root: `docs/config.json`, `docs/tasks.json`, `docs/handoff.json`, `docs/install.json`, `docs/runs/`, and `docs/archive/`. Existing repository paths may override these through the runner's documented configuration discovery. Probe fixtures use the defaults. Reject unsupported schema versions without mutation.
 
 Config v1:
 ```json
@@ -70,7 +70,7 @@ These keys are required; implementations may add namespaced metadata. Relative p
 - Handoff: `schemaVersion`, `taskId` (string/null), `plan` (path/null), `git` (actual branch/revision/dirty, or null), `evidenceRefs` (array), `decisions` (array of strings), `rejectedApproaches` (array), `blockers` (array), `nextAction` (string), `updatedAt` (UTC timestamp). Refresh objective fields and preserve narrative fields.
 - Install: `schemaVersion`, `skillVersion`, `runtime`, `files` (array of `{path, sha256}` covering generated content), `updatedAt`. Hash recorded content after successful writes; an existing differing hash requires reconciliation.
 - Attempt: `schemaVersion`, `id`, `taskId`, `status`, `startedAt`, `endedAt` (timestamp/null), `fingerprintBefore`, `fingerprintAfter` (string/null), `checks` (array of `{id, argv, cwd, status, exitCode, logPath}`), `runtime` (version facts), `errors` (array). Failed attempts remain retained.
-- Archive: `schemaVersion`, `task` (complete passing task record), `archivedAt`. Store at `docs/harness/archive/ID.json`; never overwrite a different archived record.
+- Archive: `schemaVersion`, `task` (complete passing task record), `archivedAt`. Store at `docs/archive/ID.json`; never overwrite a different archived record.
 - Delivery: `implementationRevision`, `remote`, `prUrl`, `checkRuns` (names, revision, conclusion, URL), `observedAt`, optional `closeoutRevision`. Validate with host observations, not user-authored JSON.
 
 ## Fingerprint input projection

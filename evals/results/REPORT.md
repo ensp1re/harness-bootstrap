@@ -30,3 +30,7 @@ The planned repeated baseline-versus-harness trials, held-out agent tasks, and t
 A separate read-only review identified undefined delivery syntax, ambiguous auxiliary schemas/fingerprint inputs, missing lifecycle command routing, and optional-document link handling. The contract now defines deliver/archive forms, full default paths, minimal record schemas, and fingerprint projection. Templates route through the harness runner and retain existing user authorization boundaries. These documentation changes were structurally checked; the earlier native fixtures predate the expanded schema and are not certified implementations of it.
 
 Go 1.27.1 fixture: native `go test ./...` passed and all six basic probes passed. Source-change freshness, failed-check evidence, dependency cycles and preserved handoff are covered by native tests. See go-report.md for detailed limits.
+
+## Flat layout update — 2026-09-07
+
+Moved fixture state and documents directly into `docs/` and updated the contract and probes to match. Generated tooling belongs directly in `scripts/`. Reverified Node and Python fixture tasks after the path changes: each passed six basic and eight scenario probes. Go native tests and six basic probes passed. Bundle validation and both probe unit tests passed. The coverage limits above still apply.

@@ -21,9 +21,9 @@ import (
 
 const (
 	schemaVersion = 1
-	stateFile     = "docs/harness/tasks.json"
-	configFile    = "docs/harness/config.json"
-	handoffFile   = "docs/harness/handoff.json"
+	stateFile     = "docs/tasks.json"
+	configFile    = "docs/config.json"
+	handoffFile   = "docs/handoff.json"
 )
 
 type Check struct {
@@ -451,7 +451,7 @@ func dependencyCycle(tasks []Task) string {
 }
 
 func archiveExists(root, id string) bool {
-	path, err := safePath(root, filepath.Join("docs/harness/archive", id+".json"))
+	path, err := safePath(root, filepath.Join("docs/archive", id+".json"))
 	if err != nil {
 		return false
 	}
@@ -907,7 +907,7 @@ func archiveCommand(root string) (map[string]interface{}, error) {
 			remaining = append(remaining, task)
 			continue
 		}
-		if err := saveJSON(root, filepath.Join("docs/harness/archive", task.ID+".json"), task); err != nil {
+		if err := saveJSON(root, filepath.Join("docs/archive", task.ID+".json"), task); err != nil {
 			return nil, err
 		}
 		archived = append(archived, task.ID)

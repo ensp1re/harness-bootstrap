@@ -61,7 +61,7 @@ func invoke(t *testing.T, root string, args ...string) (int, map[string]interfac
 func TestValidationRejectsMalformedDuplicateAndCycle(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, fixtureTasks(), fixtureConfig())
-	if err := os.WriteFile(filepath.Join(root, "docs/harness/tasks.json"), []byte("{invalid"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs/tasks.json"), []byte("{invalid"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, result := invoke(t, root, "validate")

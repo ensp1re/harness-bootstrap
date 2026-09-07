@@ -7,8 +7,8 @@ import sys
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    config = json.loads((root / "docs/harness/config.json").read_text())
-    tasks = json.loads((root / "docs/harness/tasks.json").read_text())
+    config = json.loads((root / "docs/config.json").read_text())
+    tasks = json.loads((root / "docs/tasks.json").read_text())
     if config.get("schemaVersion") != 1 or tasks.get("schemaVersion") != 1:
         return 1
     ids = [task.get("id") for task in tasks.get("tasks", [])]

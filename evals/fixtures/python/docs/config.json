@@ -15,13 +15,13 @@
     "pyproject.toml",
     "scripts/harness.py",
     "scripts/check_harness.py",
-    "docs/harness/GOALS.md",
-    "docs/harness/PLANS.md",
-    "docs/harness/ARCHITECTURE.md",
-    "docs/harness/RELIABILITY.md",
-    "docs/harness/SECURITY.md",
-    "docs/harness/config.json",
-    "docs/harness/tasks.json"
+    "docs/GOALS.md",
+    "docs/PLANS.md",
+    "docs/ARCHITECTURE.md",
+    "docs/RELIABILITY.md",
+    "docs/SECURITY.md",
+    "docs/config.json",
+    "docs/tasks.json"
   ],
   "delivery": {
     "required": false,

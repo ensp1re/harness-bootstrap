@@ -12,6 +12,6 @@ python3 scripts/harness.py --root . tasks
 python3 scripts/harness.py --root . validate
 ```
 
-The durable state lives under `docs/harness/`. Evaluation runs and logs are disposable evidence
-records under `docs/harness/runs/`; those transient outputs are omitted from this public snapshot.
-The empty archive directory is recoverable under `docs/harness/archive/` when the runner creates it.
+The durable state lives under `docs/`. Evaluation runs and logs are disposable evidence
+records under `docs/runs/`; those transient outputs are omitted from this public snapshot.
+The empty archive directory is recoverable under `docs/archive/` when the runner creates it.

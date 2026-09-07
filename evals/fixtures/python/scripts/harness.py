@@ -116,7 +116,7 @@ def atomic_write_json(path: Path, value: dict) -> None:
 
 @contextmanager
 def state_lock(root: Path):
-    lock_path = safe_path(root, "docs/harness/.lock")
+    lock_path = safe_path(root, "docs/.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as handle:
         if fcntl is not None:
@@ -130,12 +130,12 @@ def state_lock(root: Path):
 
 def paths(root: Path) -> dict[str, Path]:
     return {
-        "config": safe_path(root, "docs/harness/config.json"),
-        "tasks": safe_path(root, "docs/harness/tasks.json"),
-        "handoff": safe_path(root, "docs/harness/handoff.json"),
-        "handoff_md": safe_path(root, "docs/harness/SESSION_HANDOFF.md"),
-        "archive": safe_path(root, "docs/harness/archive/tasks.json"),
-        "runs": safe_path(root, "docs/harness/runs"),
+        "config": safe_path(root, "docs/config.json"),
+        "tasks": safe_path(root, "docs/tasks.json"),
+        "handoff": safe_path(root, "docs/handoff.json"),
+        "handoff_md": safe_path(root, "docs/SESSION_HANDOFF.md"),
+        "archive": safe_path(root, "docs/archive/tasks.json"),
+        "runs": safe_path(root, "docs/runs"),
     }
 
 
@@ -346,7 +346,7 @@ def recover_running(root: Path, locations: dict[str, Path]) -> list[str]:
 
 
 def canonical_file_bytes(root: Path, relative: str, path: Path) -> bytes:
-    if relative == "docs/harness/tasks.json" and path.is_file():
+    if relative == "docs/tasks.json" and path.is_file():
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
             for task in value.get("tasks", []) if isinstance(value, dict) else []:
@@ -436,7 +436,7 @@ def render_handoff(data: dict) -> str:
         f"- Active slice: {data.get('activeTask') or 'None'}\n"
         f"- Branch or worktree: {data.get('branch') or 'Unavailable'}\n"
         f"- Base commit: {data.get('revision') or 'Unavailable'}\n"
-        "- Tracking: `docs/harness/tasks.json`\n\n"
+        "- Tracking: `docs/tasks.json`\n\n"
         "## Completed\n\n"
         f"{bullets(data.get('completed'))}\n\n"
         "## Exact next action\n\n"
@@ -616,7 +616,7 @@ def run_one_check(root: Path, check: dict, attempt_id: str, locations: dict[str,
     argv = check["argv"]
     cwd_rel = check.get("cwd", ".")
     cwd = safe_path(root, cwd_rel, allow_missing=False)
-    log_path = safe_path(root, f"docs/harness/runs/{attempt_id}-{check['id']}.log")
+    log_path = safe_path(root, f"docs/runs/{attempt_id}-{check['id']}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     executable = argv[0]
     if shutil.which(executable) is None and not (Path(executable).is_absolute() and os.access(executable, os.X_OK)):
@@ -665,7 +665,7 @@ def run_one_check(root: Path, check: dict, attempt_id: str, locations: dict[str,
 
 def run_checks(root: Path, config: dict, task: dict, locations: dict[str, Path]) -> tuple[dict, list[dict]]:
     attempt_id = uuid.uuid4().hex
-    attempt_path = safe_path(root, f"docs/harness/runs/{attempt_id}.json")
+    attempt_path = safe_path(root, f"docs/runs/{attempt_id}.json")
     check_map = {check.get("id"): check for check in config.get("checks", []) if isinstance(check, dict)}
     check_ids = task.get("verification", [])
     attempt = {
@@ -731,7 +731,7 @@ def command_verify(root: Path, task_id: str) -> tuple[dict, int]:
     run_status = "passed" if passed else "failed"
     attempt.update({"status": run_status, "endedAt": utc_now(), "preFingerprint": pre, "postFingerprint": post,
                     "checks": results, "fresh": pre == post, "recoveredBeforeRun": recovered})
-    attempt_path = safe_path(root, f"docs/harness/runs/{attempt['attemptId']}.json")
+    attempt_path = safe_path(root, f"docs/runs/{attempt['attemptId']}.json")
     with state_lock(root):
         config2, tasks2, archive2, locations2 = load_state(root)
         errors2 = validate_config(config2, root) + validate_tasks(tasks2, archive2, root, config2)

@@ -12,8 +12,8 @@
       "dependsOn": [],
       "evidence": null,
       "id": "F001",
-      "plan": "docs/harness/PLANS.md",
-      "spec": "docs/harness/GOALS.md",
+      "plan": "docs/PLANS.md",
+      "spec": "docs/GOALS.md",
       "state": "not_started",
       "verification": []
     },
@@ -29,7 +29,7 @@
         "acceptanceMap": {
           "The native harness plumbing check exits successfully.": "check:harness_validate"
         },
-        "attemptId": "c095adce0e9f4c82a52b869144964c7d",
+        "attemptId": "73241c641bf8469fac931f76a2c04abe",
         "checks": [
           {
             "argv": [
@@ -37,24 +37,24 @@
               "scripts/check_harness.py"
             ],
             "cwd": ".",
-            "durationMs": 21,
+            "durationMs": 26,
             "exitCode": 0,
             "id": "harness_validate",
-            "logPath": "docs/harness/runs/c095adce0e9f4c82a52b869144964c7d-harness_validate.log",
+            "logPath": "docs/runs/73241c641bf8469fac931f76a2c04abe-harness_validate.log",
             "status": "passed",
             "timedOut": false
           }
         ],
-        "fingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
+        "fingerprint": "c0bb5ff552561b57ac5d6164a3d7891dd59d61e430aff04661b3f81ae1dc1091",
         "fresh": true,
-        "postFingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
-        "preFingerprint": "29bd2fc88dbc1e2d58ad7b075866026a7b7c4ff418a6287fc97810187ad65558",
-        "recordedAt": "2026-09-06T17:43:05Z",
+        "postFingerprint": "c0bb5ff552561b57ac5d6164a3d7891dd59d61e430aff04661b3f81ae1dc1091",
+        "preFingerprint": "c0bb5ff552561b57ac5d6164a3d7891dd59d61e430aff04661b3f81ae1dc1091",
+        "recordedAt": "2026-09-07T13:02:04Z",
         "status": "passed"
       },
       "id": "F002",
-      "plan": "docs/harness/PLANS.md",
-      "spec": "docs/harness/GOALS.md",
+      "plan": "docs/PLANS.md",
+      "spec": "docs/GOALS.md",
       "state": "verified",
       "verification": [
         "harness_validate"

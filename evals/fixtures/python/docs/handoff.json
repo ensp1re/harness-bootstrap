@@ -29,7 +29,7 @@
       "durationMs": 19,
       "exitCode": 0,
       "id": "harness_validate",
-      "logPath": "docs/harness/runs/dd167f25b3994541bc03ffa329dd9ac3-harness_validate.log",
+      "logPath": "docs/runs/dd167f25b3994541bc03ffa329dd9ac3-harness_validate.log",
       "status": "passed",
       "timedOut": false
     }

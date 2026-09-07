@@ -8,7 +8,7 @@ import path from 'node:path';
 
 const execFile = promisify(execFileCallback);
 const SCHEMA_VERSION = 1;
-const HARNESS = 'docs/harness';
+const HARNESS = 'docs';
 const STATE_FILES = {
   config: `${HARNESS}/config.json`,
   tasks: `${HARNESS}/tasks.json`,

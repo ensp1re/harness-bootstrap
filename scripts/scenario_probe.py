@@ -21,9 +21,9 @@ def main():
         with tempfile.TemporaryDirectory(prefix='harness-scenario-') as d:
             root = Path(d) / 'fixture'
             shutil.copytree(source, root, ignore=shutil.ignore_patterns('.git','__pycache__','node_modules'))
-            p = root/'docs/harness/tasks.json'
+            p = root/'docs/tasks.json'
             tasks = json.loads(p.read_text())
-            configpath = root/'docs/harness/config.json'
+            configpath = root/'docs/config.json'
             config = json.loads(configpath.read_text())
             verified = next((t for t in tasks['tasks'] if t['state']=='verified'), None)
             cmd = ['validate']
@@ -58,7 +58,7 @@ def main():
                 config['checks'][0]['timeoutSeconds']+=1
                 configpath.write_text(json.dumps(config));expected={1,2}
             elif name == 'handoff-preserves-decisions':
-                hp=root/'docs/harness/handoff.json'
+                hp=root/'docs/handoff.json'
                 handoff=json.loads(hp.read_text());handoff['decisions']=['Preserve this user decision'];hp.write_text(json.dumps(handoff))
                 cmd=['handoff']
             # Absolute runner path continues to execute original code against isolated root.
