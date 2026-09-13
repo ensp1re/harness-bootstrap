@@ -1,0 +1,648 @@
+{
+  "schemaVersion": 1,
+  "id": "harness-bootstrap-sequence",
+  "revision": 3,
+  "kind": "sequence",
+  "title": "Harness bootstrap and task execution \u2014 specified contract",
+  "theme": "dark",
+  "layoutHints": {
+    "direction": "right",
+    "pinnedNodeIds": []
+  },
+  "groups": [],
+  "nodes": [
+    {
+      "id": "user",
+      "kind": "actor",
+      "label": "User",
+      "groupId": null,
+      "ports": []
+    },
+    {
+      "id": "agent",
+      "kind": "participant",
+      "label": "Coding agent",
+      "groupId": null,
+      "ports": []
+    },
+    {
+      "id": "repo",
+      "kind": "participant",
+      "label": "Repository files",
+      "groupId": null,
+      "ports": []
+    },
+    {
+      "id": "runner",
+      "kind": "participant",
+      "label": "Native runner",
+      "groupId": null,
+      "ports": []
+    },
+    {
+      "id": "checks",
+      "kind": "participant",
+      "label": "Checks / probes",
+      "groupId": null,
+      "ports": []
+    },
+    {
+      "id": "github",
+      "kind": "participant",
+      "label": "GitHub / CI",
+      "groupId": null,
+      "ports": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "m1",
+      "source": {
+        "nodeId": "user"
+      },
+      "target": {
+        "nodeId": "agent"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 1,
+      "label": "Bootstrap: describe project and constraints"
+    },
+    {
+      "id": "m2",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 2,
+      "label": "Inspect instructions, stack and CI"
+    },
+    {
+      "id": "m3",
+      "source": {
+        "nodeId": "repo"
+      },
+      "target": {
+        "nodeId": "agent"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 3,
+      "label": "Existing facts and conventions"
+    },
+    {
+      "id": "m4",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 4,
+      "label": "Read contract and adapt templates"
+    },
+    {
+      "id": "m5",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 5,
+      "label": "Write docs, queue, runner and tests"
+    },
+    {
+      "id": "m6",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "checks"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 6,
+      "label": "Run native tests and both probes"
+    },
+    {
+      "id": "m7",
+      "source": {
+        "nodeId": "checks"
+      },
+      "target": {
+        "nodeId": "agent"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 7,
+      "label": "Results and capability gaps"
+    },
+    {
+      "id": "m8",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "user"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 8,
+      "label": "Readiness report; product work queued"
+    },
+    {
+      "id": "m9",
+      "source": {
+        "nodeId": "user"
+      },
+      "target": {
+        "nodeId": "agent"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 9,
+      "label": "Authorize product task"
+    },
+    {
+      "id": "m10",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 10,
+      "label": "context; tasks; transition F001 active"
+    },
+    {
+      "id": "m11",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 11,
+      "label": "Check dependencies; enforce one active task"
+    },
+    {
+      "id": "m12",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 12,
+      "label": "Implement task and acceptance checks"
+    },
+    {
+      "id": "m13",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 13,
+      "label": "verify F001"
+    },
+    {
+      "id": "m14",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 14,
+      "label": "Save started attempt and input fingerprint"
+    },
+    {
+      "id": "m15",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "checks"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 15,
+      "label": "Run configured checks; retain logs"
+    },
+    {
+      "id": "m16",
+      "source": {
+        "nodeId": "checks"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 16,
+      "label": "Check and acceptance results"
+    },
+    {
+      "id": "m17",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 17,
+      "label": "Compare fingerprints; mark verified if valid"
+    },
+    {
+      "id": "m18",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 18,
+      "label": "deliver F001 after commit + authorization"
+    },
+    {
+      "id": "m19",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 19,
+      "label": "Require fresh evidence and feature branch"
+    },
+    {
+      "id": "m20",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "github"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 20,
+      "label": "Push; draft PR; wait for required CI"
+    },
+    {
+      "id": "m21",
+      "source": {
+        "nodeId": "github"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 21,
+      "label": "CI success tied to implementation revision"
+    },
+    {
+      "id": "m22",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 22,
+      "label": "Record delivery; verified to passing"
+    },
+    {
+      "id": "m23",
+      "source": {
+        "nodeId": "agent"
+      },
+      "target": {
+        "nodeId": "runner"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 23,
+      "label": "handoff; optional archive F001"
+    },
+    {
+      "id": "m24",
+      "source": {
+        "nodeId": "runner"
+      },
+      "target": {
+        "nodeId": "repo"
+      },
+      "type": "message",
+      "direction": "forward",
+      "order": 24,
+      "label": "Refresh checkpoint; retain durable evidence"
+    },
+    {
+      "id": "m25",
+      "source": {
+        "nodeId": "repo"
+      },
+      "target": {
+        "nodeId": "agent"
+      },
+      "type": "reply",
+      "direction": "forward",
+      "order": 25,
+      "label": "Next session reads queue and handoff"
+    }
+  ],
+  "views": [
+    {
+      "id": "overview",
+      "kind": "overview",
+      "name": "All"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev1",
+      "targetKind": "edge",
+      "targetId": "m1",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev2",
+      "targetKind": "edge",
+      "targetId": "m2",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev3",
+      "targetKind": "edge",
+      "targetId": "m3",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev4",
+      "targetKind": "edge",
+      "targetId": "m4",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev5",
+      "targetKind": "edge",
+      "targetId": "m5",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev6",
+      "targetKind": "edge",
+      "targetId": "m6",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev7",
+      "targetKind": "edge",
+      "targetId": "m7",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev8",
+      "targetKind": "edge",
+      "targetId": "m8",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev9",
+      "targetKind": "edge",
+      "targetId": "m9",
+      "state": "observed",
+      "path": "SKILL.md",
+      "snapshot": "b8c753894270b7dd7818a22ce736c3060896ca630c36beed8deb069033c4cef9",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev10",
+      "targetKind": "edge",
+      "targetId": "m10",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev11",
+      "targetKind": "edge",
+      "targetId": "m11",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev12",
+      "targetKind": "edge",
+      "targetId": "m12",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev13",
+      "targetKind": "edge",
+      "targetId": "m13",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev14",
+      "targetKind": "edge",
+      "targetId": "m14",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev15",
+      "targetKind": "edge",
+      "targetId": "m15",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev16",
+      "targetKind": "edge",
+      "targetId": "m16",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev17",
+      "targetKind": "edge",
+      "targetId": "m17",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev18",
+      "targetKind": "edge",
+      "targetId": "m18",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev19",
+      "targetKind": "edge",
+      "targetId": "m19",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev20",
+      "targetKind": "edge",
+      "targetId": "m20",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev21",
+      "targetKind": "edge",
+      "targetId": "m21",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev22",
+      "targetKind": "edge",
+      "targetId": "m22",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev23",
+      "targetKind": "edge",
+      "targetId": "m23",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev24",
+      "targetKind": "edge",
+      "targetId": "m24",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    },
+    {
+      "id": "ev25",
+      "targetKind": "edge",
+      "targetId": "m25",
+      "state": "observed",
+      "path": "references/contract.md",
+      "snapshot": "b6605c2861b5bc554bddc1a13594d1077e9cb850242ecfd759f83104af1b4801",
+      "note": "Specified workflow, not a claim of full runtime implementation."
+    }
+  ],
+  "layout": {
+    "version": 1,
+    "revision": 1,
+    "positions": {
+      "user": {
+        "x": 0,
+        "y": 0
+      },
+      "agent": {
+        "x": 145,
+        "y": 0
+      },
+      "repo": {
+        "x": 344,
+        "y": 0
+      },
+      "runner": {
+        "x": 566,
+        "y": 0
+      },
+      "checks": {
+        "x": 773,
+        "y": 0
+      },
+      "github": {
+        "x": 999,
+        "y": 0
+      }
+    }
+  }
+}
