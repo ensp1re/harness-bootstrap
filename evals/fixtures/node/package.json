@@ -1,9 +1,0 @@
-{
-  "name": "json-formatter-fixture",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "node --test tests/existing.test.mjs",
-    "lint": "node scripts/check-existing.mjs"
-  }
-}

@@ -1,43 +1,71 @@
 ---
 name: harness-bootstrap
-description: Create or reconcile a repository-local development harness from a project description, including specifications, work tracking, session handoff, native verification tooling, and GitHub delivery checks. Use for requests to bootstrap or improve the project harness, not ordinary feature implementation.
+description: Turn a project idea, a written spec, or an existing repository into a working harness for coding agents - domain research scaled to the uncertainty, a project definition with testable requirements, a small task queue with real checks, and a bundled runner that tracks tasks, verification evidence, and session handoff. Use when someone wants to start a project with coding agents ("I have an idea for a website", "set up this repo so agents can build it", "bootstrap the harness"), rerun or upgrade an existing harness, or migrate a harness-bootstrap 1.x project. Not for ordinary feature work in a repository that already has the harness; its AGENTS.md covers that.
 ---
 # Harness Bootstrap
 
-Turn a product description into a repository that a fresh coding-agent session can understand, verify, and resume. Bootstrap ends with the harness validated and product work queued, unless the user also authorizes implementation.
+The result: a fresh agent session in the repository runs one command, learns what to do next, finishes one task end to end with proof, and leaves state the next session can trust. Bootstrap ends with the project defined, the harness installed, and tasks queued. Build product features only if the user asked for that as well.
 
-## Discover and agree
+A bootstrapped repository gets: `AGENTS.md` (project notes plus the harness block), `docs/PROJECT.md`, `docs/RESEARCH.md` when research ran, `docs/tasks.json` and `docs/config.json`, and the runner `scripts/harness.py`. Details: [references/harness.md](references/harness.md).
 
-Inspect repository instructions, git status, manifests/lockfiles, runtime versions, existing docs, test commands and CI before asking for facts. Preserve existing work and conventions. Do not implement a sample product merely to make bootstrap checks green. Keep test-only plumbing fixtures isolated from the target product. For an empty repository, establish product outcomes, non-goals, stack, and acceptance criteria with the user. Ask only questions whose answers change the result; do not invent product choices or verification success.
+`<skill>` below means the directory that contains this file.
 
-Default to the project's native runtime, generating the tooling anew against [the behavioral contract](references/contract.md). Do not require Node for Python/Go projects or Python for Node projects. If no runtime is chosen, resolve that before generating executables. Reuse verified commands from project configuration; treat file names as clues, not proof.
+## 1. Inspect
 
-This first version integrates GitHub delivery; other hosts are reported as unsupported rather than given fictitious workflows. Default delivery is a feature branch, full local gate, pushed implementation, draft GitHub PR, successful CI, and verified state-only closeout. Missing remote/access is a delivery blocker, not a reason to fabricate evidence or block useful local preparation. Pushes/PRs remain subject to the user's actual authorization; never infer deployment or merge permission.
+Run `python3 <skill>/scripts/bootstrap.py inspect <repo>`. Read the instruction files it lists (AGENTS.md, CLAUDE.md, CONTRIBUTING) and the README. Existing project rules win over this skill's defaults.
 
-## Generate and reconcile
+Pick the mode:
+- **Idea**: no code and no spec. Full discovery.
+- **Spec**: the request or docs already define users, behavior, interface, and checkable results. Discovery tier 0.
+- **Existing code**: the code is the truth about current behavior. Discover only the requested next work and what the code cannot tell.
+- **Rerun**: the harness or 1.x files are present. Follow "Rerunning bootstrap" or "Migrating" in references/harness.md, then continue at step 4 for anything new.
 
-Read [the contract](references/contract.md) and use [the template map](assets/templates/README.md) as adaptable source material. Put generated documents and state/config files directly in `docs/`, native tooling directly in `scripts/`, and tests directly in `tests/`. Do not create a harness subdirectory in any of these locations. Preserve existing canonical files and reconcile naming conflicts without overwriting user content.
+If `python3` is missing, stop and report it as a blocker with the install command for the platform. Do not generate a runner in another language unless the user asks for one.
 
-Generate a compact AGENTS router, product/architecture facts, live queue, current handoff, reliability/security instructions and initial bounded plan. Create change records only for substantial behavior changes. Small tasks need a queue entry, not a document ceremony. Include only non-obvious rules and useful routing; omit speculative background and duplicate instructions.
+## 2. Discover
 
-Expose the command interface in the contract using native tooling and the repository's command conventions. It must work without this skill installed. Do not create mandatory `.agents` or `.claude` trees. Derive objective facts mechanically; keep decisions and next actions human-readable.
+In Idea mode, and for Existing code when the requested work is not defined yet, read [references/discovery.md](references/discovery.md) and follow it. Skip it for Spec and Rerun unless the request changes what the product should do. It sets the research depth from uncertainty and stakes, the budget, when to stop, and when to ask the user. Ask at most 3 questions, once, each with a recommended default. The stack is your decision, recorded with its reason, not a question.
 
-Inventory proposed files before writing. Preserve existing instructions, CI jobs and user edits. Record generated files and content hashes in the install manifest. On rerun, replace only unchanged generated content; reconcile edited files surgically and report conflicts. Never delete unrelated files. Use schema versions and explicit migrations; don't reset live state on upgrades.
+## 3. Define
 
-Native generation is not permission to improvise away contract requirements. If a capability cannot be implemented and tested, report it as unavailable and leave readiness incomplete.
+Write `docs/PROJECT.md` from [the template](assets/templates/PROJECT.md.tmpl), and `docs/RESEARCH.md` from [its template](assets/templates/RESEARCH.md.tmpl) when research ran. Delete empty sections. PROJECT.md holds decisions, not history, copied research text, or a restatement of the request: add a D- row only for a choice someone could reasonably make differently.
 
-## Verify
+Each requirement is one observable behavior with Given/When/Then acceptance, concrete values, and the check that will prove it. Write `docs/ARCHITECTURE.md` only for two or more deployable parts, or boundaries the code will not show.
 
-Use [evaluation scenarios](evals/README.md). Run `scripts/check_bundle.py` when changing bundled assets. Run the generated runner's native tests and both probe protocols (basic state checks plus scenario checks on an explicitly verified fixture). A basic probe alone cannot establish freshness or dependency correctness. The bundled `scripts/probe.py` is an authoring/evaluation helper only: it is not a dependency of generated projects. If Python is absent, implement the same probes in the available runtime.
+## 4. Plan the queue
 
-Run real available baseline checks. Empty projects may pass harness validation while product readiness remains unverified; queue setup of missing product checks. Do not install or start unrelated infrastructure solely for template validation.
+- One task is one observable behavior that a single session can finish, with 1–5 acceptance lines copied from its R- rows and `--ref` to those IDs. Split anything bigger.
+- New project: F001 is a walking skeleton. Scaffold the chosen stack, and add one passing example of every check the project will use (for a web app: unit, build, and a browser smoke test). Later tasks then start from green checks.
+- Existing code: if the current checks fail, F001 makes them pass before any feature.
+- Order by dependency. Put code that can test the riskiest assumption early.
+- Queue 3–8 tasks for the first release. Later ideas stay in the PROJECT.md scope, not in the queue. Behavior that already exists and works needs no task.
 
-For substantial skill changes, use a fresh evaluator with a realistic request and raw fixtures, withholding expected output. Compare against a compact baseline. Evaluate requirements, edits preserved, stale evidence, false completion, interruption and fresh-session resumption. Record failures and observed results; never invent token/cost measurements.
+## 5. Install and configure
 
-Research or review subagents are optional when independent work helps. One coordinator owns queue/handoff changes. Give bounded context and responsibility, respect configured model choices, and use no parallel implementation without explicit authorization.
+1. Run `python3 <skill>/scripts/bootstrap.py install <repo>`. Add `--claude` when the user works in Claude Code. On a repository that already has a harness or legacy files, run with `--dry-run` first. Report conflicts; never overwrite them.
+2. Put the checks in `docs/config.json` (see "Checks" in references/harness.md). Take commands from package scripts, Makefile, and CI. Required checks are the fast regression suite. Also give each task its own check that runs only the tests for its acceptance (for example `node --test test/tags.test.js`); the task itself creates that test. Web interfaces get browser tests, unless project rules forbid the tooling: then use HTTP-level tests and record the gap as an A- row.
+3. Above the harness block in `AGENTS.md`, write the project part in at most 40 lines: purpose in one line, setup, dev, and run commands, and project rules the code does not show. Leave existing instructions as they are. Link to PROJECT.md instead of copying it. No generic advice.
+4. Queue the tasks: `python3 scripts/harness.py add "<behavior>" --accept "..." --check <id> --after F00n --ref R-n`. Never write `docs/tasks.json` by hand.
 
-## Closeout
+## 6. Validate and report
 
-Report what was generated, native checks executed, remaining setup/delivery blockers, and the first queued product task. Leave current state consistent. Do not claim the product is built, publish anything automatically, or turn a successful bootstrap into indefinite execution.
+Run `python3 scripts/harness.py validate` and `status`. For existing code, run the required checks' commands once and record whether the baseline passes; queue fixes instead of making them during bootstrap. Prove a new check by running its command directly, not with `start` or `verify`: a task left active or verified blocks the first task of the next session. Do not commit or push unless the user asked; list the files to commit.
 
-See [research rationale](references/research.md) when evaluating a new mechanism. Retain or remove process based on observed behavior, rather than adding rules after every isolated failure.
+Report briefly:
+- the mode and discovery tier, and the findings that changed scope;
+- questions asked, and the defaults in use;
+- files created, updated, or in conflict;
+- checks and the baseline result;
+- the queue and its first task;
+- anything unverified or blocked.
+
+Stop here unless the user also asked you to build. If they did, follow the task loop in the AGENTS.md harness block.
+
+## Rules that prevent known failures
+
+- Never invent facts, check results, or links. Unknowns become A- or Q- rows.
+- One home for each kind of state: tasks and evidence in `docs/tasks.json` through the runner, product decisions in PROJECT.md, check commands in `docs/config.json`. Do not create plan, handoff, status, or changelog documents.
+- Never overwrite user content. Edit existing docs surgically.
+- Research subagents only for tier 3, on separate topics. One agent writes the docs and runs the harness.
+
+Changing this skill: see [evals/README.md](evals/README.md).
