@@ -1,54 +1,38 @@
-# Behavioral evaluation
+# Evaluating harness-bootstrap
 
-Evaluate generated native runners, not template wording. Never run external publishing as a test. Keep fixtures outside the user's project.
+## 1. Deterministic checks (every change)
 
-## Black-box probe
+```sh
+python3 scripts/check_bundle.py
+python3 -m unittest discover -s evals -p 'test_*.py'
+```
 
-`python3 scripts/probe.py --root FIXTURE -- RUNNER [RUNNER_ARGS]`
+- `check_bundle.py` checks four things: required files exist, the SKILL.md frontmatter is valid, every runner command the docs mention exists, and local links resolve.
+- `test_harness.py` runs the runner and the installer as black boxes in temporary repositories. Runner cases: the full task loop, the one-task limit, dependencies, stale evidence, interrupted verify, a lock left by a dead process, a missing command, timeouts, invalid state files, `drop`, repeated failures, 1.x state, required reviews, must-not-change paths, `wrapup`, and `list` hiding finished tasks. Installer cases: existing content is kept, reruns are safe, conflicts are reported, dry runs write nothing, and `inspect` output.
 
-The probe appends `--root FIXTURE COMMAND`, expects the contract's JSON/exit semantics and restores the exact tasks file after temporary invalid-state checks. Use only disposable fixtures. It tests context, validation, malformed state, duplicate tasks, missing dependency and blocked activation. It is a smoke subset, not a complete native test suite.
+## 2. Agent scenarios (substantial changes)
 
-## Independent forward tasks
+Build each fixture fresh in a scratch directory, never inside this repository. Give the agent only the skill path and the prompt, never the checks below. Run the old and new skill versions with the same model on the same fixture.
 
-Give the evaluator the skill and one brief, without your intended artifacts or conclusions:
+| ID | Starting repository | Prompt (short) | Passes when |
+|---|---|---|---|
+| a | empty directory | "website for my bouldering gym: new problems each week, members log sends" | all of: tier 1+ recorded; 3+ alternatives with dated sources; assumptions with tests; at most 3 questions, each with a default; R- rows with Given/When/Then and a check; F001 is a walking skeleton; `validate` passes; no feature code |
+| b | empty git repository | csvdiff CLI with the exit codes, BOM, and duplicate-key rules spelled out | all of: tier 0; no RESEARCH.md; each stated rule is in the acceptance; checks use stdlib tools only; no questions |
+| c | small Node site with tests, CI, AGENTS.md, and a stale README | "set up the harness; next up: dietary tags and a cap per category" | all of: AGENTS.md rules kept; real commands in config; stale README command reported; tasks for both features; baseline check result reported; CI file unchanged |
+| d | c after bootstrap: one task active, last verify failed, a note | "pick up where the last session left off" | all of: the agent names the task and the failing check from `status` before opening other files; it finishes with `done --proof`; at most one task in progress |
+| e | c after bootstrap, with an assumption that names are public | "names must not be shown publicly any more" | all of: the assumption row is marked invalid and a decision row added; affected tasks are edited, reopened, or dropped; new tasks queued; PROJECT.md and the queue agree |
+| f | c after bootstrap, with user edits, one passing task, and a new Python script with tests | "run the bootstrap again and include the Python tests" | all of: user edits byte-identical; task IDs and evidence kept; new check added; `validate` passes |
 
-1. Node: "Bootstrap a harness for a local JSON formatter CLI. Existing package.json has test scripts and AGENTS has a custom instruction. Preserve them. Queue product work."
-2. Python: "Bootstrap a harness for a CSV header checking CLI in this existing Python repository. Preserve custom instructions and leave product work queued."
-3. Go: "Bootstrap a harness for a Go HTTP health service. Use Go-native harness tooling. Do not add Python or Node dependencies. Queue product work."
+For every run, record:
+- total tokens and duration, as reported by the agent runner;
+- files created and questions asked;
+- the steps taken before the first useful action;
+- pass or fail for each check, with the file or output that shows it.
 
-Run the generated native tests; don't claim a stack tested if its runtime isn't available. A fixture may use a test program that exits 0/1 as a harness plumbing check, clearly labeled as such, never as product acceptance.
+One run per scenario is a single observation. Report it as such and do not average it into a claim.
 
-## Scenarios beyond the probe
+## 3. Context cost without a model
 
-- Rerun initialization after editing a generated document. No loss or duplicates.
-- Change an acceptance criterion midway. Existing evidence becomes stale; related plan/spec update is visible.
-- Fail a check, remove a required executable, and time out a child process. Distinct outcomes, no passing state.
-- Interrupt verification and state/archive writes. Resume retains recoverable state and does not replay external effects blindly.
-- Verify then edit/add/delete an input file or change check configuration. Freshness becomes false.
-- Complete dependencies, archive them, then activate downstream work. IDs are not reused.
-- Resume with a fresh agent, no chat history: ask original outcome, latest check result, key decision, abandoned approach and next action. Grade against fixture ground truth.
-- Fake GitHub adapter: absent auth, failed CI, successful implementation revision, state-only closeout, product edits during closeout. No actual pushes.
+For each path (start a project, resume, implement a task, investigate a failure, change scope), list the files and command outputs an agent must read, and measure them in bytes. Token counts are estimated as bytes/4 and labeled as estimates.
 
-## Comparison
-
-For each representative agent task, run a compact baseline (brief AGENTS instructions and ordinary tests) and the generated harness with the same model/settings, fixtures and budget. Repeat at least three trials for agent-dependent outcomes before comparative claims. Judge final files and runtime behavior, not the final response.
-
-Record task/model/runtime, harness version, checks passed/failed, product acceptance, false completion claims, preserved edits, resume probes, unnecessary work, elapsed time, and token/cost only if available. Use `not_measured` when unavailable. Keep a held-out task for regression detection. Do not promote a rule on one anecdotal win.
-
-## Stronger fixture probe
-
-After a fixture has a genuinely verified plumbing task, run:
-
-`python3 scripts/scenario_probe.py --root FIXTURE -- RUNNER [RUNNER_ARGS]`
-
-It operates on temporary copies and tests empty recipes, unsatisfied delivery dependencies, acceptance/configuration drift, and preservation of handoff decisions. A baseline failure invalidates interpretation of later drift checks. This remains bounded coverage; process crashes, remote delivery, full acceptance mapping and comparative agent performance require the additional scenarios above.
-
-Before installation, run `python3 scripts/check_bundle.py` and `python3 -m unittest discover -s evals -p 'test_*.py'`.
-
-## Recorded fixtures
-
-`fixtures/node` and `fixtures/python` are evaluation snapshots, not supported runner templates. They deliberately preserve the results of independent generation and the subsequent targeted repairs. Never copy them as the production implementation or load them as instructions. Their product examples are synthetic test inputs, not completed user projects. See results/REPORT.md for coverage and limitations.
-
-To replay a snapshot, copy it to a disposable directory and run the probes with that directory's runner. Evidence is content-based and should remain fresh after copying; Git facts may legitimately differ. Native runner paths: `scripts/harness-runner.mjs` (Node), `scripts/harness.py` (Python). The fixtures do not establish full GitHub delivery or crash-recovery conformance.
-
-The Go snapshot is in `fixtures/go`. Run `go test ./...` there, build `./cmd/harness`, then run the basic probe against its nested `fixture` directory. It is a bounded evaluation implementation, not a production template.
+Results: [results/REPORT.md](results/REPORT.md).

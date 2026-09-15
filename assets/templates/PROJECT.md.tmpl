@@ -1,38 +1,45 @@
-# Project specification
+# <Project name>
 
-## Outcome
+<One sentence: who gets what outcome.>
 
-Describe the user or operator outcome this project must produce. Keep this statement observable and testable.
+Discovery: tier <0-3> (<trigger>), checked <YYYY-MM-DD>. Evidence: [RESEARCH.md](RESEARCH.md).
+
+## Users and jobs
+
+- <Role>: when <situation>, I want to <action>, so I can <outcome>. (<V-/A- ids>)
 
 ## Scope
 
-### In scope
+- First release: <R- ids> — the smallest product that completes the main job once.
+- Later: <item> (<reason id>)
+- Out: <item> (<reason id>)
 
--
+## Domain
 
-### Out of scope
+| Term | Meaning | Relations | States and rules |
+|---|---|---|---|
+| <Term used in code and UI> | | | |
 
--
+## Requirements
 
-## Requirements and acceptance
+| ID | Requirement | Acceptance (Given / When / Then) | Check | Based on |
+|---|---|---|---|---|
+| R-1 | When <trigger>, the system <observable response>. | Given <state>, when <action>, then <result with concrete values>. | <check id, or manual: who> | <D-/V-/A- ids> |
 
-| ID | Requirement | Acceptance evidence | Status |
-| --- | --- | --- | --- |
-| R-001 |  |  | not_started |
+## Decisions
 
-Acceptance evidence must name an observable result, command, test, artifact, or review decision. “Implemented” is not evidence by itself.
+| ID | Decision (alternatives considered) | By | Date | Because |
+|---|---|---|---|---|
+| D-1 | <choice> (<other options>) | user / agent default | <YYYY-MM-DD> | <R-/V-/A- ids> |
 
-## Constraints
+## Assumptions
 
-- Supported environments and versions:
-- Data, privacy, or operational constraints:
-- Compatibility and migration constraints:
-- Performance or availability target:
+| ID | We believe that | Wrong if | Test and threshold | Owner | Status |
+|---|---|---|---|---|---|
+| A-1 | | | | user / agent | open |
 
-## Interfaces and dependencies
+## Open questions
 
-List the public interfaces, external systems, and assumptions that affect behavior. Link to the architecture document at [{{ARCHITECTURE_PATH}}]({{ARCHITECTURE_PATH}}) when the boundary needs more detail.
-
-## Verification contract
-
-The project’s local verification command is `{{VERIFY_COMMAND}}`. CI is defined or selected by [{{CI_WORKFLOW_PATH}}]({{CI_WORKFLOW_PATH}}). Update this section when acceptance criteria or required checks change.
+| ID | Question, options, recommended | Who can answer | Blocks | Default in use |
+|---|---|---|---|---|
+| Q-1 | | user | <R- ids> / no | |
