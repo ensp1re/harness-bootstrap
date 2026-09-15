@@ -38,16 +38,31 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
 | Installer with hashes and markers (`scripts/bootstrap.py install`) | P12 | Makes reruns deterministic instead of improvised | Only the runner and the AGENTS.md block are managed; docs are the agent's and the user's | installer tests; scenario f |
 | Check recipes per stack; a browser test for each visible criterion in web projects | P14 | Anthropic: agents marked features done untested until told to test like a user; METR (2026-03-10): passing tests are not mergeable code | Playwright needs a network install; not bundled | scenarios a, c |
 
+## Added after reading the course end to end (2026-09-15)
+
+| Course point | Change | Cost | How it is checked |
+|---|---|---|---|
+| L09, L11, L13, L14: the agent that writes code must not judge it | `add --review` marks a task; `review ID --pass/--fail` records a fresh-context review; `done` requires a passing review of the current files | one reviewer run per marked task; the runner cannot prove the reviewer was independent | review test |
+| L12: every session ends clean | `wrapup --note` runs required and `wrapup: true` checks, flags debug leftovers in added lines and uncommitted work without a note, and stores the result for the next `status` | a check run per session end; leftover patterns can match legitimate lines | wrapup test |
+| L07 task template, L11 sprint contract: what must not change | `--keep` entries; path globs fail `verify` when they changed since `start` | path checks need git | must-not-change test |
+| L14: "not enough information → back to research" | task loop step 3: one round of at most 5 searches, or `block` with the question | depends on the agent following the rule | not tested |
+| L06: initialization is its own phase and actually runs | SKILL.md step 6 builds the walking skeleton through the loop and commits the baseline | needs network and commit permission; otherwise F001 stays ready | not tested with agents |
+| L01, L09: an explicit definition of done | a "Definition of done" paragraph in the AGENTS.md block, enforced by `verify`, `review` and `done` | about 80 more words loaded each session | bundle check |
+| L04, L05: context that keeps growing | `list` hides finished tasks; notes before a compaction; PROJECT.md split rule in references/harness.md | none | list test |
+
 ## Considered and not adopted
 
 - **Generate a native runner per project (1.x):** token cost and drift (P2).
 - **A Node twin of the runner:** a second implementation to keep identical. Python 3 is present on nearly every development machine and agent sandbox. Ported runners remain possible, but the tests are Python.
-- **A separate evaluator agent per task:** Anthropic's full harness cost about 22× a solo run and helped mainly near the model's limit. Keep it as a project choice, not a default.
+- **A separate evaluator for every task:** Anthropic's full harness cost about 22× a solo run and helped mainly near the model's limit. Review is opt-in per task (`--review`) instead.
 - **Running a task's checks at `start` to prove they fail first:** slow for build or browser suites. `--proof` at `done` is the cheaper guard; revisit if evaluations show false completions.
 - **A GitHub `deliver` command and `archive`:** outward actions stay under the user's authorization. `status` stays short without archiving.
 
+## Decisions
+
+- **Python 3.8+ where agents work** (confirmed by the user on 2026-09-15). It reverses the 1.x rule against requiring Python in Node projects; one tested runner is worth the dependency.
+
 ## Decisions to revisit
 
-1. The Python requirement reverses the 1.x rule "never require Python for Node projects".
-2. `passing` no longer means "merged with green CI". Repositories that need that should gate merges in CI.
-3. `docs/harness-sequence.png` still shows the 1.x flow.
+1. `passing` no longer means "merged with green CI". Repositories that need that should gate merges in CI.
+2. `docs/harness-sequence.png` still shows the 1.x flow.

@@ -116,7 +116,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
         repo.run('note', 'F001', 'queue edits must not invalidate evidence')
         repo.run('add', 'unrelated follow-up')
-        self.assertIn('commit, then `done F001`', repo.run('status')[1])
+        self.assertIn('commit, then `done F001 --proof', repo.run('status')[1])
         repo.write('src.txt', 'v2')
         code, out = repo.run('done', 'F001', '--proof', '1=ok')
         self.assertEqual(code, 1)
@@ -218,6 +218,71 @@ class RunnerTest(unittest.TestCase):
         self.assertIn('`verify F002` again', out)
         self.assertEqual(repo.run('verify', 'F002')[0], 0)
         self.assertEqual(json.loads((repo.root / 'docs/tasks.json').read_text())['schemaVersion'], 2)
+
+    def test_review_is_required_before_done_and_must_match_current_files(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK}])
+        repo.run('add', 'reviewed thing', '--accept', 'works', '--check', 'ok', '--review')
+        repo.run('start', 'F001')
+        repo.write('app.txt', 'v1')
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+        self.assertIn('independent review', repo.run('status')[1])
+        repo.commit('work')
+        code, out = repo.run('done', 'F001', '--proof', '1=ok')
+        self.assertEqual(code, 1, out)
+        self.assertIn('independent review', out)
+        code, out = repo.run('review', 'F001', '--fail', '--summary', 'edge case missing', '--by', 'subagent')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.tasks()['F001']['state'], 'active')
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+        self.assertEqual(repo.run('review', 'F001', '--pass', '--summary', 'covers the edge case')[0], 0)
+        code, out = repo.run('done', 'F001', '--proof', '1=ok')
+        self.assertEqual(code, 0, out)
+
+    def test_changing_a_must_not_change_path_fails_verify(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK}])
+        repo.write('public/api.txt', 'stable')
+        repo.write('src/feature.txt', 'old')
+        repo.commit('base')
+        repo.run('add', 'change the feature only', '--accept', 'feature updated', '--check', 'ok',
+                 '--keep', 'public/*', '--keep', 'the public response shape')
+        repo.run('start', 'F001')
+        self.assertIn('must not change: public/*; the public response shape', repo.run('status')[1])
+        repo.write('src/feature.txt', 'new')
+        repo.write('public/api.txt', 'changed')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('public/api.txt', out)
+        repo.write('public/api.txt', 'stable')
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+
+    def test_wrapup_needs_a_note_runs_checks_and_flags_debug_leftovers(self):
+        repo = Repo(self, [{'id': 'suite', 'argv': OK, 'required': True},
+                           {'id': 'smoke', 'argv': [PY, '-c', 'raise SystemExit(1)'], 'wrapup': True}])
+        repo.run('add', 'thing', '--accept', 'x', '--check', 'suite')
+        repo.run('start', 'F001')
+        code, out = repo.run('wrapup')
+        self.assertEqual(code, 2, out)
+        self.assertIn('--note', out)
+        repo.write('src/app.js', 'console.log("debug here")\n')
+        code, out = repo.run('wrapup', '--note', 'half done; next: finish the parser')
+        self.assertEqual(code, 1, out)
+        self.assertIn('smoke failed', out)
+        self.assertIn('src/app.js:1', out)
+        status = repo.run('status')[1]
+        self.assertIn('last wrapup', status)
+        self.assertIn('not clean', status)
+        self.assertIn('half done; next: finish the parser', status)
+
+    def test_list_hides_finished_tasks_unless_all(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK}], use_git=False)
+        repo.run('add', 'first', '--accept', 'x', '--check', 'ok')
+        repo.run('add', 'second', '--accept', 'x', '--check', 'ok')
+        repo.run('drop', 'F002', '--reason', 'not needed')
+        out = repo.run('list')[1]
+        self.assertIn('F001', out)
+        self.assertNotIn('F002', out)
+        self.assertIn('1 dropped hidden', out)
+        self.assertIn('F002', repo.run('list', '--all')[1])
 
 
 def bootstrap(*args):

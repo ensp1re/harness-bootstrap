@@ -8,7 +8,7 @@ This record compares 1.x (commit 786b6a4) with 2.0 on disposable fixtures. The f
 |---|---|
 | `python3 scripts/check_bundle.py` | ok |
 | skill-creator `quick_validate.py` | valid. PyYAML is not installed, so a local stand-in parsed the flat `key: value` frontmatter; it fails on anything more complex. |
-| `python3 -m unittest discover -s evals -p 'test_*.py'` | 12 tests OK on Python 3.14.7 and on macOS system Python 3.9.6 |
+| `python3 -m unittest discover -s evals -p 'test_*.py'` | 16 tests OK on Python 3.14.7 and on macOS system Python 3.9.6 |
 | Manual smoke test on a copy of the potluck site | install, add, start, then a failing verify printed the log path and log tail; `status` showed the failure |
 
 ## 2. What an agent reads and writes
@@ -109,3 +109,16 @@ All numbers are bytes. Token counts are estimates: bytes/4.
 - Windows and Python 3.8. Tests ran on 3.9.6 and 3.14.7 only.
 - Research budgets, tier triggers and the 6-month recheck rule: unmeasured estimates, tried on one idea.
 - Repeated trials. No claim here rests on more than one run.
+
+## 6. Added after the agent runs (not re-run with agents)
+
+These were added after reading the course end to end:
+- the independent review step;
+- `wrapup` at session end;
+- must-not-change lists;
+- the rule for research in the middle of a task;
+- a real initialization phase;
+- the explicit definition of done;
+- `list` hiding finished tasks.
+
+The unit tests in `evals/test_harness.py` cover the runner parts. No agent scenario was re-run after these changes, so their effect on tokens and completion is not measured.

@@ -6,6 +6,7 @@ Start every session with `python3 scripts/harness.py status`; `-h` lists command
 Agents do not need to read this file: `status`, `show ID` and `COMMAND -h` print what the loop needs.
 """
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -26,6 +27,67 @@ BOOKKEEPING = (TASKS, LOCK, RUNS + '/', 'docs/install.json')  # never fingerprin
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', '.next', 'dist', 'build', 'target', 'coverage'}
 TAIL_LINES = 30
 TASK_ID = re.compile(r'F\d{3,}')
+EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'  # git's empty tree, the base for repos without commits
+DEBUG_LEFTOVER = re.compile(r'console\.log\(|\bdebugger\b|breakpoint\(\)|pdb\.set_trace\(|binding\.pry|\bdbg!\(|\b(TODO|FIXME|XXX)\b')
+
+
+def is_path_rule(rule):
+    """A must-not-change entry that names files (no spaces; contains / * or .) instead of a behavior."""
+    return bool(re.fullmatch(r'\S+', rule)) and any(mark in rule for mark in '/*.')
+
+
+def changed_since(root, base):
+    """Paths changed since commit `base` (committed, staged, unstaged, or untracked); None without git."""
+    tracked = git(root, 'diff', '--name-only', base or EMPTY_TREE)
+    untracked = git(root, 'ls-files', '--others', '--exclude-standard')
+    if tracked is None or untracked is None:
+        return None
+    return sorted({name for name in (tracked + untracked).splitlines() if name and not name.startswith(BOOKKEEPING)})
+
+
+def added_lines(root):
+    """(path, line number, text) for lines added since the last commit, untracked files included; None without git."""
+    if git(root, 'rev-parse', '--is-inside-work-tree') is None:
+        return None
+    found, path, line_number = [], None, 0
+    diff = git(root, 'diff', 'HEAD', '--unified=0', '--no-color', '--no-ext-diff')
+    for line in (diff or '').splitlines():
+        if line.startswith('+++ '):
+            path = line[6:] if line.startswith('+++ b/') else None
+        elif line.startswith('@@'):
+            match = re.search(r'\+(\d+)', line)
+            line_number = int(match.group(1)) if match else 0
+        elif line.startswith('+') and path:
+            found.append((path, line_number, line[1:]))
+            line_number += 1
+    listing = git(root, 'ls-files', '--others', '--exclude-standard') if diff is not None \
+        else git(root, 'ls-files', '--cached', '--others', '--exclude-standard')
+    for name in (listing or '').splitlines():
+        try:
+            if (root / name).stat().st_size > 200_000:
+                continue
+            text = (root / name).read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
+            continue
+        found.extend((name, index, content) for index, content in enumerate(text.splitlines(), 1))
+    return found
+
+
+def debug_leftovers(root):
+    lines = added_lines(root)
+    if lines is None:
+        return None
+    runner = Path(__file__).resolve()
+    return [f'{name}:{line_number}: {shorten(text.strip(), 70)}' for name, line_number, text in lines
+            if not name.startswith(BOOKKEEPING) and not name.endswith(('.md', '.txt'))
+            and (root / name).resolve() != runner and DEBUG_LEFTOVER.search(text)]
+
+
+def uncommitted(root):
+    status = git(root, 'status', '--porcelain', '--untracked-files=all')
+    if status is None:
+        return None
+    return [line[3:] for line in status.splitlines() if not line[3:].strip('"').startswith(BOOKKEEPING)]
 
 
 class Refused(Exception):
@@ -374,7 +436,12 @@ def next_step(state, found):
     if verified:
         task = verified[0]
         reason = stale_reason(state, task)
-        return f'`verify {task["id"]}` again ({reason})' if reason else f'commit, then `done {task["id"]}`'
+        if reason:
+            return f'`verify {task["id"]}` again ({reason})'
+        if task.get('review') and not review_passed(state, task):
+            return (f'get an independent review: a reviewer with fresh context reads `show {task["id"]}` and `git diff`, '
+                    f'then records `review {task["id"]} --pass|--fail --summary "..."`')
+        return f'commit, then `done {task["id"]} --proof ...`'
     ready = state.ready()
     if ready:
         task = ready[0]
@@ -398,6 +465,11 @@ def cmd_status(root, args):
         head = (git(root, 'rev-parse', '--short', 'HEAD') or '').strip() or 'no commits'
         changed = (git(root, 'status', '--porcelain') or '').splitlines()
         print(f'git: {branch} @ {head}, ' + (f'{len(changed)} uncommitted paths' if changed else 'clean'))
+    last = state.data.get('lastWrapup')
+    if isinstance(last, dict):
+        print(f'last wrapup: {"clean" if last.get("clean") else "not clean"} at {last.get("at")}'
+              + ''.join(f'; {problem}' for problem in (last.get('problems') or [])[:3])
+              + (f'; note: {last["note"]}' if last.get('note') else ''))
     checks = state.checks()
     for task in state.with_state('active', 'verified'):
         print(f'{task["state"]}: {task["id"]} {task.get("behavior")}')
@@ -406,10 +478,16 @@ def cmd_status(root, args):
         for check_id in run_order(state, task):
             argv = checks.get(check_id, {}).get('argv')
             print(f'  check {check_id}: ' + (' '.join(argv) if argv else f'MISSING from {CONFIG}'))
+        if task.get('keep'):
+            print('  must not change: ' + '; '.join(task['keep']))
         if task.get('refs'):
             print('  refs: ' + ', '.join(task['refs']))
         reason = stale_reason(state, task)
         print('  last: ' + evidence_line(task) + (f' [stale: {reason}]' if reason else ''))
+        if task.get('review'):
+            review = (task.get('evidence') or {}).get('review')
+            print('  review: ' + (f'{review.get("result")} by {review.get("by")} at {review.get("at")}: {review.get("summary")}'
+                                 if review else 'required, not done yet'))
         if (task.get('failedVerifies') or 0) >= 2:
             print(f'  failed verifies in a row: {task["failedVerifies"]}')
         for note in (task.get('notes') or [])[-3:]:
@@ -447,13 +525,19 @@ def cmd_status(root, args):
 
 def cmd_list(root, args):
     state = State(root)
+    hidden = {}
     for task in sorted(state.tasks, key=number):
+        if task.get('state') in ('passing', 'dropped') and not args.all:
+            hidden[task['state']] = hidden.get(task['state'], 0) + 1
+            continue
         waits = [dep for dep in task.get('dependsOn') or [] if not state.satisfied(dep)]
         extra = f' [waits on {", ".join(waits)}]' if waits and task.get('state') == 'not_started' else ''
         if task.get('state') == 'blocked':
             extra = f' [{task.get("blockedReason")}]'
         refs = f' ({", ".join(task["refs"])})' if task.get('refs') else ''
         print(f'{task.get("id")} {task.get("state", "?"):<11} {shorten(task.get("behavior"), 80)}{refs}{extra}')
+    if hidden:
+        print('(' + ', '.join(f'{count} {name}' for name, count in hidden.items()) + ' hidden; `list --all` shows them)')
     if not state.tasks:
         print('no tasks')
     return 0
@@ -467,9 +551,15 @@ def cmd_show(root, args):
     for key, label in (('dependsOn', 'depends on'), ('refs', 'refs')):
         if task.get(key):
             print(f'{label}: ' + ', '.join(task[key]))
-    for key in ('spec', 'plan', 'blockedReason'):
+    if task.get('keep'):
+        print('must not change: ' + '; '.join(task['keep']))
+    for key in ('spec', 'plan', 'blockedReason', 'baseCommit'):
         if task.get(key):
             print(f'{key}: {task[key]}')
+    if task.get('review'):
+        review = (task.get('evidence') or {}).get('review')
+        print('review: ' + (f'{review.get("result")} by {review.get("by")} at {review.get("at")}: {review.get("summary")}'
+                            if review else 'required, not done yet'))
     for index, item in enumerate(task.get('acceptance') or [], 1):
         print(f'accept {index}: {item}')
     for check_id in run_order(state, task):
@@ -515,7 +605,8 @@ def cmd_add(root, args):
         next_id = max([next_id] + [number(task) + 1 for task in state.tasks if number(task) < 10 ** 9])
         task = {'id': f'F{next_id:03d}', 'behavior': args.behavior, 'acceptance': args.accept,
                 'dependsOn': args.after, 'state': 'not_started', 'verification': args.check,
-                'refs': args.ref, 'notes': [], 'blockedReason': None, 'evidence': None}
+                'refs': args.ref, 'keep': args.keep, 'review': args.review, 'notes': [],
+                'blockedReason': None, 'evidence': None}
         state.tasks.append(task)
         state.data['nextId'] = next_id + 1
         state.save()
@@ -542,6 +633,10 @@ def cmd_edit(root, args):
             task['dependsOn'] = clear_or(args.after)
         if args.ref:
             task['refs'] = clear_or(args.ref)
+        if args.keep:
+            task['keep'] = clear_or(args.keep)
+        if args.review is not None:
+            task['review'] = args.review == 'on'
         cycle = find_cycle(state.tasks)
         if cycle:
             raise Refused('dependency cycle: ' + ' -> '.join(cycle), 2)
@@ -578,8 +673,14 @@ def cmd_start(root, args):
         if not task.get('acceptance') or not task.get('verification'):
             raise Refused(f'{task["id"]} needs acceptance criteria and at least one check: `edit {task["id"]} --accept ... --check ...`')
         task['state'], task['blockedReason'] = 'active', None
+        task['baseCommit'] = head_commit(state.root)
         return f'started {task["id"]}: {task.get("behavior")}\nnext: implement it, then `verify {task["id"]}`'
     return transition(root, args.id, change)
+
+
+def head_commit(root):
+    """The commit work starts from; must-not-change paths are compared against it."""
+    return (git(root, 'rev-parse', 'HEAD') or '').strip() or None
 
 
 def cmd_block(root, args):
@@ -599,7 +700,7 @@ def cmd_reopen(root, args):
         busy = [other for other in state.with_state('active', 'verified') if other is not task]
         if busy:
             raise Refused(f'{busy[0]["id"]} is {busy[0]["state"]}; finish or block it first')
-        task['state'] = 'active'
+        task['state'], task['baseCommit'] = 'active', head_commit(state.root)
         task.setdefault('notes', []).append(f'{now()[:10]} reopened: {args.reason}')
         return f'reopened {task["id"]}\nnext: change what the reason requires, then `verify {task["id"]}`'
     return transition(root, args.id, change)
@@ -639,6 +740,18 @@ def cmd_verify(root, args):
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # lets run_check stop the check's process group
     before = state.file_digests()
     results = [run_check(root, checks[check_id], runs / f'{task["id"]}-{stamp}-{check_id}.log') for check_id in order]
+    path_rules = [rule for rule in task.get('keep') or [] if is_path_rule(rule)]
+    if path_rules:
+        touched = changed_since(root, task.get('baseCommit'))
+        if touched is None:
+            print('must-not-change paths were not checked: this is not a git repository')
+        else:
+            hits = [f'{name} (matches {rule})' for name in touched for rule in path_rules if fnmatch.fnmatch(name, rule)]
+            keep_log = runs / f'{task["id"]}-{stamp}-keep.log'
+            keep_log.write_text(''.join(f'changed a must-not-change path: {hit}\n' for hit in hits)
+                                or 'no must-not-change path changed\n', encoding='utf-8')
+            results.append({'id': 'keep', 'outcome': 'failed' if hits else 'passed', 'exit': 1 if hits else 0,
+                            'seconds': 0.0, 'log': keep_log.relative_to(root).as_posix()})
     after = state.file_digests()
     changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
     passed = all(result['outcome'] == 'passed' for result in results)
@@ -697,10 +810,12 @@ def cmd_done(root, args):
         reason = stale_reason(state, task)
         if reason:
             raise Refused(f'{task["id"]} evidence is stale ({reason}); run `verify {task["id"]}` again')
+        if task.get('review') and not review_passed(state, task):
+            raise Refused(f'{task["id"]} needs an independent review of the current files: a reviewer with fresh context '
+                          f'reads `show {task["id"]}` and `git diff`, then records `review {task["id"]} --pass|--fail --summary "..."`')
         commit = None
-        if git(root, 'rev-parse', '--is-inside-work-tree') is not None:
-            pending = [line[3:] for line in (git(root, 'status', '--porcelain', '--untracked-files=all') or '').splitlines()
-                       if not line[3:].strip('"').startswith(BOOKKEEPING)]
+        pending = uncommitted(root)
+        if pending is not None:
             if pending:
                 raise Refused('commit the verified change first; uncommitted: ' + ', '.join(pending[:5])
                               + (' ...' if len(pending) > 5 else ''))
@@ -734,6 +849,68 @@ def cmd_drop(root, args):
     return transition(root, args.id, change)
 
 
+def review_passed(state, task):
+    review = (task.get('evidence') or {}).get('review') or {}
+    return review.get('result') == 'pass' and review.get('filesHash') == state.files_hash()
+
+
+def cmd_review(root, args):
+    if args.result is None:
+        raise Refused('give --pass or --fail', 2)
+
+    def change(state, task):
+        if task.get('state') != 'verified':
+            raise Refused(f'{task["id"]} is {task.get("state")}; review a task after `verify {task["id"]}` passes')
+        reason = stale_reason(state, task)
+        if reason:
+            raise Refused(f'{task["id"]} evidence is stale ({reason}); `verify {task["id"]}` again before the review')
+        task['evidence']['review'] = {'result': args.result, 'by': args.by, 'summary': args.summary,
+                                      'at': now(), 'filesHash': state.files_hash()}
+        task.setdefault('notes', []).append(f'{now()[:10]} review {args.result} by {args.by}: {args.summary}')
+        if args.result == 'fail':
+            task['state'] = 'active'
+            return f'review failed for {task["id"]}; it is active again\nnext: fix the findings, then `verify {task["id"]}`'
+        return f'review passed for {task["id"]}\nnext: commit, then `done {task["id"]} --proof ...`'
+    return transition(root, args.id, change)
+
+
+def cmd_wrapup(root, args):
+    state = State(root)
+    in_progress = state.with_state('active', 'verified')
+    if in_progress and not args.note:
+        raise Refused(f'{in_progress[0]["id"]} is {in_progress[0]["state"]}: add --note "what is done, what is next" '
+                      'so the next session can continue', 2)
+    checks = state.checks()
+    selected = [check['id'] for check in state.config.get('checks') or []
+                if isinstance(check, dict) and check.get('id') and (check.get('required') or check.get('wrapup'))]
+    runs = root / RUNS
+    runs.mkdir(parents=True, exist_ok=True)
+    stamp = now().replace('-', '').replace(':', '')
+    results = [run_check(root, checks[check_id], runs / f'wrapup-{stamp}-{check_id}.log') for check_id in selected]
+    found = [f'{result["id"]} {result["outcome"]} (log {result["log"]})' for result in results if result['outcome'] != 'passed']
+    leftovers = debug_leftovers(root)
+    found += [f'debug leftover {hit}' for hit in (leftovers or [])[:10]]
+    pending = uncommitted(root) or []
+    if pending and not args.note:
+        found.append(f'{len(pending)} uncommitted paths and no --note explaining them')
+    with Lock(root):
+        state = State(root)
+        for task in state.with_state('active', 'verified'):
+            task.setdefault('notes', []).append(f'{now()[:10]} {args.note}')
+        state.data['lastWrapup'] = {'at': now(), 'clean': not found, 'problems': found[:10], 'note': args.note}
+        state.save()
+    for result in results:
+        print(f'  {result["id"]}: {result["outcome"]} exit {result["exit"]} {result["seconds"]}s {result["log"]}')
+    if leftovers is None:
+        print('debug leftovers were not checked: this is not a git repository')
+    if pending:
+        print('uncommitted: ' + ', '.join(pending[:5]) + (' ...' if len(pending) > 5 else ''))
+    for problem in found:
+        print(f'problem: {problem}')
+    print('wrapup: clean' if not found else f'wrapup: not clean ({len(found)} problems); fix them or leave them for the next session')
+    return 0 if not found else 1
+
+
 def parser():
     top = argparse.ArgumentParser(prog='harness.py', description=__doc__.splitlines()[0])
     top.add_argument('--root', type=Path, default=Path(__file__).resolve().parent.parent,
@@ -749,18 +926,29 @@ def parser():
 
     task_id = (['id'], {'help': 'task id, e.g. F001'})
     many = {'action': 'append', 'default': []}
+    keep_help = 'what must not change while the task is built: a path glob such as public/* or a behavior (repeat)'
     command('status', cmd_status, 'where things stand and the next step; start every session here')
-    command('list', cmd_list, 'one line per task')
+    command('list', cmd_list, 'one line per open task', (['--all'], {'action': 'store_true', 'help': 'include passing and dropped tasks'}))
     command('show', cmd_show, 'full detail, evidence and notes for one task', task_id)
     command('add', cmd_add, 'queue a task',
             (['behavior'], {'help': 'observable outcome, one sentence'}),
             (['--accept'], dict(many, help='acceptance criterion (repeat)')),
             (['--check'], dict(many, help='check id from docs/config.json (repeat)')),
             (['--after'], dict(many, help='task id this depends on (repeat)')),
-            (['--ref'], dict(many, help='related id in docs, e.g. AC-2 or ASM-1 (repeat)')))
+            (['--ref'], dict(many, help='related id in docs, e.g. R-2 or A-1 (repeat)')),
+            (['--keep'], dict(many, help=keep_help)),
+            (['--review'], {'action': 'store_true', 'help': 'require an independent review before done'}))
     command('edit', cmd_edit, 'change a task; each list option replaces the list ("none" clears it)', task_id,
             (['--behavior'], {}), (['--accept'], dict(many)), (['--check'], dict(many)),
-            (['--after'], dict(many)), (['--ref'], dict(many)))
+            (['--after'], dict(many)), (['--ref'], dict(many)), (['--keep'], dict(many, help=keep_help)),
+            (['--review'], {'choices': ['on', 'off'], 'help': 'require an independent review before done'}))
+    command('review', cmd_review, 'record an independent review of a verified task', task_id,
+            (['--pass'], {'dest': 'result', 'action': 'store_const', 'const': 'pass'}),
+            (['--fail'], {'dest': 'result', 'action': 'store_const', 'const': 'fail'}),
+            (['--summary'], {'required': True, 'help': 'findings, with evidence'}),
+            (['--by'], {'default': 'reviewer', 'help': 'who reviewed, e.g. subagent or a name'}))
+    command('wrapup', cmd_wrapup, 'end-of-session check: required checks, debug leftovers, uncommitted work',
+            (['--note'], {'help': 'what is done and what is next; required while a task is in progress'}))
     command('start', cmd_start, 'make a ready task active (one task in progress at a time)', task_id)
     command('verify', cmd_verify, 'run the task checks plus required checks and record the result', task_id)
     command('done', cmd_done, 'mark a freshly verified, committed task passing', task_id,
