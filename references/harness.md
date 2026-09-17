@@ -22,7 +22,7 @@ Read this when choosing checks, rerunning bootstrap, migrating a 1.x project, or
 | not_started or blocked → active | `start ID` | another task is active or verified; a dependency is not passing; no acceptance or no own check |
 | active → verified, or stays active | `verify ID` | the task is not in progress; a check id is undefined; a verify is already running. A changed must-not-change path counts as a failed check |
 | verified → verified (review recorded) or active | `review ID --pass` or `--fail` | the task is not verified; its evidence is stale |
-| verified → passing | `done ID --proof "N=..."` | evidence is stale; the task needs a review that did not pass on the current files; uncommitted changes outside bookkeeping files; a criterion has no proof |
+| verified → passing | `done ID --proof "N=..."` | evidence is stale; the task needs a review that did not pass on the current files; uncommitted changes outside bookkeeping files; a criterion has no proof; with pull-request delivery, you are not on the task's branch. The task waits until its pull request is merged |
 | not_started or active → blocked | `block ID --reason` | — |
 | verified or passing → active | `reopen ID --reason` | another task is in progress |
 | unfinished → dropped | `drop ID --reason` | the task is passing |
@@ -65,6 +65,39 @@ For a web project, every user-visible acceptance criterion gets a browser test. 
 - Files changed by the checks themselves are listed after verify. Ignore generated output in `.gitignore`.
 - **Must-not-change.** `start` and `reopen` record the current commit. Entries without spaces that contain `/`, `*` or `.` are file globs: `verify` adds a `keep` result that fails when a matching path changed since that commit. Other entries are shown by `status` and `show` for the agent and the reviewer. Without git the globs are not checked, and `verify` says so.
 - **Review.** A review records pass or fail, the reviewer, a summary, and the files hash. `done` accepts only a passing review of the current files, so any change after the review needs a new verify and review. The runner cannot prove the reviewer was independent: use a subagent or a new session that did not write the code.
+
+## Delivery: branch, pull request, merge
+
+`docs/config.json` may set `"delivery": {"mode": "pr", "base": "main", "merge": "squash", "checksWaitSeconds": 90}`. Without it, the runner uses pull requests whenever the repository has an `origin` remote, into the default branch origin reports (else `main`). `"mode": "local"` keeps finished work local.
+
+With pull requests:
+- **`start`:** fetches origin. It refuses while the tree has uncommitted work, another task's pull request is not merged, or `origin/<base>` has no `docs/tasks.json` yet (merge the harness first). Otherwise it creates `<type>/<id>-<words>` from `origin/<base>`, where the type comes from `add --type` (feat, fix, refactor, perf, docs, test, build, ci, chore). It also installs a pre-push hook that refuses direct pushes to the base branch.
+- **`verify` and `done`:** refuse on any branch except the task's own.
+- **`done`:**
+  1. records the task as passing in a commit on the branch, and pushes;
+  2. opens the pull request, or finds the open one;
+  3. waits for the checks, at most `checksWaitSeconds` per call, so it ends before the 2-minute command limit many agent tools have;
+  4. merges with `--match-head-commit`, so only the verified commit can land;
+  5. reads the pull request back from GitHub and counts it merged only when GitHub says so;
+  6. switches to the base branch, pulls, and deletes the task branch.
+- **Failed checks:** the task is active again, with the failing check names and links in a note. Fix, commit, `verify`, `done`.
+- **Waiting for merge:** the task stays passing, no other task can start, and `done ID` (without `--proof`) continues. This happens when:
+  - checks are still running: run `done ID` again;
+  - GitHub needs an approval: tell the user;
+  - the base branch uses a merge queue: run `done ID` again later;
+  - the branch conflicts with the base branch: `git merge origin/<base>`, then `reopen`, `verify`, `done`.
+- **Changes after `done`:** `done ID` refuses to continue when files on the task branch changed since the verified commit. `reopen` and verify again.
+- **Closed without merging:** `done ID` stops and says so. Ask the user; `reopen` to change the work, and `drop` it after reopening if it is not wanted.
+- **Errors from `gh`** (not logged in, network): `done` stops without merging and prints the error. It never reads an error as "no checks".
+- **No checks:** when GitHub reports none, `done` merges. If a workflow in `.github/workflows` runs on `pull_request`, it first waits up to 60 seconds for the checks to appear.
+- **Another clone:** until the merge, the queue that shows the task lives on the task branch. In a clone that is on the base branch, `status` lists those task branches and says to switch to one.
+- **First delivery:** when origin has no base branch yet, the task is built on the base branch and `done` pushes it directly. This is the only direct push to the base branch the harness makes.
+- **GitHub CLI:** `gh` must be installed and logged in. Without it, `done` pushes the branch and stops with the fix.
+
+Limits:
+- The hook protects only clones where `start` ran and no hook manager (`core.hooksPath`, for example husky) is configured. `git push --no-verify` skips it. Turn on branch protection for the base branch in the GitHub settings to enforce the rule on the server.
+- Merge state is read from `docs/tasks.json` on `origin/<base>`, so that file must be committed.
+- Checks from systems outside GitHub Actions that report late can be missed by the no-checks rule; require them in branch protection.
 
 ## Session end: `wrapup`
 

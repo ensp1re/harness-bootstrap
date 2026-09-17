@@ -122,3 +122,26 @@ These were added after reading the course end to end:
 - `list` hiding finished tasks.
 
 The unit tests in `evals/test_harness.py` cover the runner parts. No agent scenario was re-run after these changes, so their effect on tokens and completion is not measured.
+
+## 7. Pull-request delivery (2026-09-17, not re-run with agents)
+
+Every task after the first delivery now ships through its own branch and pull request, and `done` merges it after the checks pass.
+
+The 8 delivery tests use a bare local remote and a fake `gh`. The fake follows what the `gh` 2.100 help text says:
+- `pr checks --json` has a `bucket` field (pass, fail, pending, skipping, cancel) and fails with "no checks reported" when there are none;
+- `pr merge --match-head-commit` refuses a head that is not the verified commit;
+- with a merge queue, `pr merge` only queues the merge.
+
+The runner reads the JSON and the pull request state, never the exit codes, so exit codes are not part of the fake.
+
+| Check | Result |
+|---|---|
+| `python3 -m unittest discover -s evals -p 'test_*.py'` | 24 tests OK on Python 3.14.7 and 3.9.6 |
+| 12 deliberate bugs, one at a time, in a copy of the runner (for example the hook allowing base pushes, a `gh` error read as "no checks", trusting the merge exit code, no check for changes after `done`) | each one made a delivery test fail |
+
+Not tested against real GitHub:
+- branch protection;
+- required approvals;
+- merge queues;
+- check suites that take time to appear after a push;
+- squash-merge history.

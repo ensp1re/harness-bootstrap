@@ -26,8 +26,9 @@ I want to build a website where neighbours can lend each other tools. Set it up 
 6. **Initialize.** For a new project, the walking skeleton (F001) goes through the task loop and the baseline is committed.
 7. **Report.** Findings, defaults in use, checks and their baseline, the wrapup result, and the next task.
 
-In a bootstrapped repository every session starts with `python3 scripts/harness.py status` and ends with `wrapup --note`. The loop in AGENTS.md: `start` → test first → `verify` → independent `review` when the task asks for one → commit → `done --proof` → next task. The runner refuses to:
-- start a second task;
+In a bootstrapped repository every session starts with `python3 scripts/harness.py status` and ends with `wrapup --note`. The loop in AGENTS.md: `start` (the task's own branch) → test first → `verify` → independent `review` when the task asks for one → commit → `done --proof`, which pushes, opens a pull request, waits for the checks and merges → next task. After the first delivery, the base branch changes only through those pull requests. The runner refuses to:
+- push straight to the base branch (a git hook blocks it);
+- start a second task while one is in progress or its pull request is not merged;
 - pass a task that changed a path on its must-not-change list;
 - finish with stale, unreviewed or uncommitted work;
 - mark a task done without proof for each acceptance criterion.

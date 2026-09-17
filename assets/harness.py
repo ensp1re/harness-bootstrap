@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project harness: one task queue, recorded verification, and a short resume view.
+"""Project harness: one task queue, recorded verification, pull-request delivery, and a short resume view.
 
 Installed by harness-bootstrap. Standard library only, Python 3.8+.
 Start every session with `python3 scripts/harness.py status`; `-h` lists commands.
@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -23,12 +24,23 @@ CONFIG = 'docs/config.json'
 RUNS = 'docs/runs'
 LOCK = 'docs/.harness.lock'
 STATES = ('not_started', 'active', 'blocked', 'verified', 'passing', 'dropped')
+TYPES = ('feat', 'fix', 'refactor', 'perf', 'docs', 'test', 'build', 'ci', 'chore')
 BOOKKEEPING = (TASKS, LOCK, RUNS + '/', 'docs/install.json')  # never fingerprinted, never blocks `done`
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', '.next', 'dist', 'build', 'target', 'coverage'}
 TAIL_LINES = 30
 TASK_ID = re.compile(r'F\d{3,}')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'  # git's empty tree, the base for repos without commits
 DEBUG_LEFTOVER = re.compile(r'console\.log\(|\bdebugger\b|breakpoint\(\)|pdb\.set_trace\(|binding\.pry|\bdbg!\(|\b(TODO|FIXME|XXX)\b')
+PUSH_GUARD = '''#!/bin/sh
+# harness-bootstrap push guard: {base} changes only through pull requests.
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/{base}" ] && [ "$HARNESS_BASE_PUSH" != "1" ]; then
+    echo "Blocked by the harness: {base} changes only through pull requests. Finish the task with: python3 scripts/harness.py done ID" >&2
+    exit 1
+  fi
+done
+exit 0
+'''
 
 
 def is_path_rule(rule):
@@ -138,6 +150,28 @@ def git(root, *args):
     return result.stdout if result.returncode == 0 else None
 
 
+def git_or_refuse(root, *args, env=None):
+    try:
+        result = subprocess.run(['git', *args], cwd=root, capture_output=True, text=True, timeout=300, env=env)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise Refused(f'git {" ".join(args)} failed: {error}')
+    if result.returncode != 0:
+        raise Refused(f'git {" ".join(args)} failed: {(result.stderr or result.stdout).strip()[-400:]}')
+    return result.stdout
+
+
+def gh(root, *args):
+    try:
+        return subprocess.run(['gh', *args], cwd=root, capture_output=True, text=True, timeout=300,
+                              env=dict(os.environ, GH_PROMPT_DISABLED='1'))
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return subprocess.CompletedProcess(['gh', *args], 127, '', str(error))
+
+
+def current_branch(root):
+    return (git(root, 'branch', '--show-current') or '').strip()
+
+
 def pid_alive(pid):
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -193,6 +227,7 @@ class State:
         if not isinstance(self.config, dict):
             raise Refused(f'{CONFIG}: expected an object', 2)
         self._files_hash = None
+        self._base_states = {}
 
     def task(self, task_id):
         for task in self.tasks:
@@ -210,11 +245,25 @@ class State:
         if (self.root / 'docs/archive' / f'{dependency}.json').exists():
             return True
         return any(task.get('id') == dependency and task.get('state') == 'passing' and not stale_reason(self, task)
-                   for task in self.tasks)
+                   and not unmerged(self, task) for task in self.tasks)
 
     def ready(self):
         return [task for task in self.with_state('not_started')
                 if all(self.satisfied(dep) for dep in task.get('dependsOn') or [])]
+
+    def base_states(self, base):
+        """Task states on origin's base branch as of the last fetch; None when origin has no tasks file there."""
+        if base not in self._base_states:
+            text = git(self.root, 'show', f'refs/remotes/origin/{base}:{TASKS}')
+            try:
+                self._base_states[base] = {task.get('id'): task.get('state') for task in json.loads(text)['tasks']} \
+                    if text else None
+            except (ValueError, KeyError, TypeError, AttributeError):
+                self._base_states[base] = None
+        return self._base_states[base]
+
+    def forget_base(self):
+        self._base_states = {}
 
     def file_digests(self):
         configured = self.config.get('fingerprintPaths')
@@ -420,6 +469,122 @@ def shorten(text, width=90):
     return text if len(text) <= width else text[:width - 3] + '...'
 
 
+def delivery(state):
+    """How finished work reaches the base branch: 'pr' (branch, pull request, merge) needs an origin remote."""
+    config = state.config.get('delivery')
+    config = config if isinstance(config, dict) else {}
+    root = state.root
+    remote_head = (git(root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD') or '').strip()
+    base = config.get('base') or config.get('defaultBranch') or (remote_head.split('/', 1)[1] if '/' in remote_head else 'main')
+    wanted = config.get('mode') or ('local' if config.get('requirePR') is False else 'pr')
+    has_origin = git(root, 'remote', 'get-url', 'origin') is not None
+    return {'mode': 'pr' if wanted == 'pr' and has_origin else 'local', 'wanted': wanted, 'base': base,
+            'merge': config.get('merge') if config.get('merge') in ('squash', 'merge', 'rebase') else 'squash',
+            # one `done` call waits this long, below the 2-minute command limit common in agent tools
+            'wait': float(config.get('checksWaitSeconds', 90)),
+            'poll': float(os.environ.get('HARNESS_POLL_SECONDS', '10')),
+            'register': float(os.environ.get('HARNESS_CHECKS_REGISTER_SECONDS', '60'))}
+
+
+def unmerged(state, task):
+    """A passing task whose delivery has not reached origin's base branch yet (as of the last fetch)."""
+    info = task.get('delivery') or {}
+    if task.get('state') != 'passing' or info.get('mode') != 'pr':
+        return False
+    base = info.get('base') or 'main'
+    merged = state.base_states(base)
+    if merged is None:
+        return bool(info.get('initial')) and git(state.root, 'rev-parse', '--verify', '--quiet',
+                                                  f'refs/remotes/origin/{base}') is None
+    return merged.get(task.get('id')) != 'passing'
+
+
+def branch_name(task):
+    slug = re.sub(r'[^a-z0-9]+', '-', str(task.get('behavior') or '').lower()).strip('-')[:40].strip('-') or 'task'
+    return f'{task.get("type") or "feat"}/{str(task.get("id")).lower()}-{slug}'
+
+
+def branches_elsewhere(state):
+    """Task branches, local or fetched from origin, whose task this queue does not know or shows as not started."""
+    here, known = current_branch(state.root), {task.get('id'): task.get('state') for task in state.tasks}
+    refs = git(state.root, 'for-each-ref', '--format=%(refname:lstrip=2)', 'refs/heads', 'refs/remotes/origin') or ''
+    found = set()
+    for ref in refs.split():
+        name = ref[len('origin/'):] if ref.startswith('origin/') else ref
+        match = re.fullmatch(rf'(?:{"|".join(TYPES)})/(f\d{{3,}})-.+', name)
+        if match and name != here and known.get(match.group(1).upper(), 'not_started') == 'not_started':
+            found.add(name)
+    return sorted(found)
+
+
+def ensure_push_guard(root, base):
+    """Install a pre-push hook that refuses direct pushes to the base branch. False when another hook setup owns it."""
+    if git(root, 'config', '--get', 'core.hooksPath'):
+        return False
+    location = (git(root, 'rev-parse', '--git-path', 'hooks/pre-push') or '').strip()
+    if not location:
+        return False
+    hook = Path(location) if Path(location).is_absolute() else root / location
+    if hook.exists() and 'harness-bootstrap push guard' not in hook.read_text(encoding='utf-8', errors='replace'):
+        return False
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(PUSH_GUARD.format(base=base), encoding='utf-8')
+    hook.chmod(0o755)
+    return True
+
+
+def prepare_branch(state, task, settings, fresh):
+    """Put the working tree on the task's branch, cut from origin's base. The first delivery to an empty remote stays on base."""
+    root, base = state.root, settings['base']
+    dirty = uncommitted(root)
+    if dirty:
+        raise Refused(f'uncommitted changes: {", ".join(dirty[:5])}; commit them on their own task branch, stash, '
+                      f'or discard them before switching to {task["id"]}')
+    fetched = git(root, 'fetch', '--quiet', 'origin', base) is not None
+    state.forget_base()
+    waiting = [other['id'] for other in state.tasks if other is not task and unmerged(state, other)]
+    if waiting:
+        raise Refused(f'{waiting[0]} is not merged into {base} yet: `done {waiting[0]}` checks its pull request and merges it')
+    notes = [] if ensure_push_guard(root, base) else \
+        [f'note: direct pushes to {base} are not blocked on this clone (another hook setup is in place); protect {base} on GitHub']
+    remote = (git(root, 'rev-parse', '--verify', '--quiet', f'refs/remotes/origin/{base}') or '').strip()
+    if not remote:
+        if current_branch(root) != base:
+            raise Refused(f'origin has no {base} branch yet; switch to {base} for the first delivery')
+        task['branch'], task['initial'] = base, True
+        return notes + [f'first delivery: work on {base}; `done` pushes it to origin directly']
+    if git(root, 'cat-file', '-e', f'refs/remotes/origin/{base}:{TASKS}') is None:
+        raise Refused(f'origin/{base} has no {TASKS}: merge the harness into {base} through its own pull request first')
+    if not fetched:
+        notes.append(f'note: could not fetch origin; branching from the last fetched {base}')
+    name = task.get('branch')
+    local = bool(name) and git(root, 'rev-parse', '--verify', '--quiet', f'refs/heads/{name}') is not None
+    remote_branch = bool(name) and git(root, 'rev-parse', '--verify', '--quiet', f'refs/remotes/origin/{name}') is not None
+    if not fresh and name and name != base and (local or remote_branch):
+        command = ['switch', name] if local else ['switch', '-c', name, '--track', f'origin/{name}']
+    else:
+        stem = name = branch_name(task)
+        counter = 2
+        while git(root, 'rev-parse', '--verify', '--quiet', f'refs/heads/{name}') is not None or \
+                git(root, 'rev-parse', '--verify', '--quiet', f'refs/remotes/origin/{name}') is not None:
+            name, counter = f'{stem}-{counter}', counter + 1
+        command = ['switch', '-c', name, f'origin/{base}']
+    unpushed = (git(root, 'rev-list', '--count', f'origin/{base}..{base}') or '0').strip()
+    if unpushed not in ('', '0'):
+        notes.append(f'note: local {base} has {unpushed} commits that are not on origin; they are not part of this branch')
+    if current_branch(root) != name:
+        git(root, 'checkout', '--', TASKS)  # the queue is held in memory and written back after the switch
+        try:
+            git_or_refuse(root, *command)
+        except Refused:
+            state.save()
+            raise
+    task['branch'], task['initial'] = name, False
+    # the fork point, so a reused branch is not blamed for what changed on the base branch since
+    task['baseCommit'] = (git(root, 'merge-base', 'HEAD', f'refs/remotes/origin/{base}') or remote).strip()
+    return notes + [f'branch: {name}']
+
+
 def next_step(state, found):
     if found:
         return 'fix the problems above (`validate` lists them)'
@@ -442,6 +607,9 @@ def next_step(state, found):
             return (f'get an independent review: a reviewer with fresh context reads `show {task["id"]}` and `git diff`, '
                     f'then records `review {task["id"]} --pass|--fail --summary "..."`')
         return f'commit, then `done {task["id"]} --proof ...`'
+    waiting = [task for task in state.with_state('passing') if unmerged(state, task)]
+    if waiting:
+        return f'`done {waiting[0]["id"]}` to check its pull request and merge it'
     ready = state.ready()
     if ready:
         task = ready[0]
@@ -458,13 +626,23 @@ def next_step(state, found):
 def cmd_status(root, args):
     state = State(root)
     found = problems(state)
+    here, elsewhere = None, []
     if git(root, 'rev-parse', '--is-inside-work-tree') is None:
         print('git: not a repository')
     else:
-        branch = (git(root, 'branch', '--show-current') or '').strip() or 'detached'
+        here = current_branch(root) or 'detached'
         head = (git(root, 'rev-parse', '--short', 'HEAD') or '').strip() or 'no commits'
         changed = (git(root, 'status', '--porcelain') or '').splitlines()
-        print(f'git: {branch} @ {head}, ' + (f'{len(changed)} uncommitted paths' if changed else 'clean'))
+        print(f'git: {here} @ {head}, ' + (f'{len(changed)} uncommitted paths' if changed else 'clean'))
+        settings = delivery(state)
+        if settings['mode'] == 'pr':
+            print(f'delivery: pull requests into {settings["base"]}; `done` merges after the checks pass')
+            elsewhere = branches_elsewhere(state)  # a clone on the base branch cannot see a queue that lives on a task branch
+            if elsewhere:
+                print('task branches this queue does not show: ' + ', '.join(elsewhere[:3])
+                      + '; the task was started there, so its queue is newer')
+        elif settings['wanted'] == 'pr':
+            print('delivery: local until a GitHub remote named origin exists')
     last = state.data.get('lastWrapup')
     if isinstance(last, dict):
         print(f'last wrapup: {"clean" if last.get("clean") else "not clean"} at {last.get("at")}'
@@ -473,6 +651,9 @@ def cmd_status(root, args):
     checks = state.checks()
     for task in state.with_state('active', 'verified'):
         print(f'{task["state"]}: {task["id"]} {task.get("behavior")}')
+        if task.get('branch'):
+            print(f'  branch: {task["branch"]}' + (f' (you are on {here}: `git switch {task["branch"]}`)'
+                                                     if here and here != task['branch'] else ''))
         for index, item in enumerate(task.get('acceptance') or [], 1):
             print(f'  accept {index}: {item}')
         for check_id in run_order(state, task):
@@ -492,6 +673,10 @@ def cmd_status(root, args):
             print(f'  failed verifies in a row: {task["failedVerifies"]}')
         for note in (task.get('notes') or [])[-3:]:
             print(f'  note: {note}')
+    for task in state.with_state('passing'):
+        if unmerged(state, task):
+            print(f'waiting for merge: {task["id"]} on {task["delivery"].get("branch")}; '
+                  f'`done {task["id"]}` checks the pull request and merges it')
     ready = state.ready()
     if ready:
         print('ready: ' + '; '.join(f'{task["id"]} {shorten(task.get("behavior"), 60)}' for task in ready[:3])
@@ -519,7 +704,10 @@ def cmd_status(root, args):
         print(f'problem: {problem}')
     counts = {name: len(state.with_state(name)) for name in STATES}
     print('tasks: ' + ', '.join(f'{count} {name.replace("_", " ")}' for name, count in counts.items() if count) if state.tasks else 'tasks: none')
-    print('next: ' + next_step(state, found))
+    if elsewhere and not state.with_state('active', 'verified'):
+        print(f'next: `git switch {elsewhere[0]}`, then `status` there')
+    else:
+        print('next: ' + next_step(state, found))
     return 0
 
 
@@ -547,13 +735,13 @@ def cmd_show(root, args):
     state = State(root)
     task = state.task(args.id)
     checks = state.checks()
-    print(f'{task["id"]} [{task.get("state")}] {task.get("behavior")}')
+    print(f'{task["id"]} [{task.get("state")}] {task.get("type") or "feat"}: {task.get("behavior")}')
     for key, label in (('dependsOn', 'depends on'), ('refs', 'refs')):
         if task.get(key):
             print(f'{label}: ' + ', '.join(task[key]))
     if task.get('keep'):
         print('must not change: ' + '; '.join(task['keep']))
-    for key in ('spec', 'plan', 'blockedReason', 'baseCommit'):
+    for key in ('branch', 'spec', 'plan', 'blockedReason', 'baseCommit'):
         if task.get(key):
             print(f'{key}: {task[key]}')
     if task.get('review'):
@@ -574,6 +762,8 @@ def cmd_show(root, args):
         print('  checks changed files: ' + ', '.join(evidence['changedDuringRun']))
     if evidence.get('commit'):
         print(f'  done at commit {evidence["commit"]}')
+    if unmerged(state, task):
+        print(f'delivery: waiting for merge of {task["delivery"].get("branch")}')
     reason = stale_reason(state, task)
     if reason:
         print(f'stale: {reason}')
@@ -603,7 +793,7 @@ def cmd_add(root, args):
         check_references(state, None, args.check, args.after)
         next_id = state.data.get('nextId') if isinstance(state.data.get('nextId'), int) else 1
         next_id = max([next_id] + [number(task) + 1 for task in state.tasks if number(task) < 10 ** 9])
-        task = {'id': f'F{next_id:03d}', 'behavior': args.behavior, 'acceptance': args.accept,
+        task = {'id': f'F{next_id:03d}', 'type': args.type, 'behavior': args.behavior, 'acceptance': args.accept,
                 'dependsOn': args.after, 'state': 'not_started', 'verification': args.check,
                 'refs': args.ref, 'keep': args.keep, 'review': args.review, 'notes': [],
                 'blockedReason': None, 'evidence': None}
@@ -623,6 +813,8 @@ def cmd_edit(root, args):
         before = task_hash(task)
         if args.behavior is not None:
             task['behavior'] = args.behavior
+        if args.type is not None:
+            task['type'] = args.type
         if args.accept:
             task['acceptance'] = args.accept
         if args.check:
@@ -659,6 +851,11 @@ def transition(root, task_id, change):
     return 0
 
 
+def head_commit(root):
+    """The commit work starts from; must-not-change paths are compared against it."""
+    return (git(root, 'rev-parse', 'HEAD') or '').strip() or None
+
+
 def cmd_start(root, args):
     def change(state, task):
         if task.get('state') not in ('not_started', 'blocked'):
@@ -672,15 +869,14 @@ def cmd_start(root, args):
             raise Refused(f'{task["id"]} waits on {", ".join(waiting)}, which must be passing first')
         if not task.get('acceptance') or not task.get('verification'):
             raise Refused(f'{task["id"]} needs acceptance criteria and at least one check: `edit {task["id"]} --accept ... --check ...`')
+        settings = delivery(state)
+        notes = prepare_branch(state, task, settings, fresh=False) if settings['mode'] == 'pr' else []
+        if settings['mode'] != 'pr' or task.get('initial'):
+            task['baseCommit'] = head_commit(state.root)
         task['state'], task['blockedReason'] = 'active', None
-        task['baseCommit'] = head_commit(state.root)
-        return f'started {task["id"]}: {task.get("behavior")}\nnext: implement it, then `verify {task["id"]}`'
+        return '\n'.join([f'started {task["id"]}: {task.get("behavior")}', *notes,
+                          f'next: implement it, then `verify {task["id"]}`'])
     return transition(root, args.id, change)
-
-
-def head_commit(root):
-    """The commit work starts from; must-not-change paths are compared against it."""
-    return (git(root, 'rev-parse', 'HEAD') or '').strip() or None
 
 
 def cmd_block(root, args):
@@ -700,9 +896,16 @@ def cmd_reopen(root, args):
         busy = [other for other in state.with_state('active', 'verified') if other is not task]
         if busy:
             raise Refused(f'{busy[0]["id"]} is {busy[0]["state"]}; finish or block it first')
-        task['state'], task['baseCommit'] = 'active', head_commit(state.root)
+        settings = delivery(state)
+        fresh = task.get('state') == 'passing' and not unmerged(state, task)
+        notes = prepare_branch(state, task, settings, fresh=fresh) if settings['mode'] == 'pr' else []
+        if settings['mode'] != 'pr' or task.get('initial'):
+            task['baseCommit'] = head_commit(state.root)
+        task['state'] = 'active'
+        task.pop('delivery', None)
         task.setdefault('notes', []).append(f'{now()[:10]} reopened: {args.reason}')
-        return f'reopened {task["id"]}\nnext: change what the reason requires, then `verify {task["id"]}`'
+        return '\n'.join([f'reopened {task["id"]}', *notes,
+                          f'next: change what the reason requires, then `verify {task["id"]}`'])
     return transition(root, args.id, change)
 
 
@@ -711,6 +914,19 @@ def cmd_note(root, args):
         task.setdefault('notes', []).append(f'{now()[:10]} {args.text}')
         return f'noted on {task["id"]}'
     return transition(root, args.id, change)
+
+
+def require_task_branch(state, task, settings):
+    """In pull-request delivery, work on the task's own branch, never on the base branch."""
+    if settings['mode'] != 'pr':
+        return
+    here, expected = current_branch(state.root), task.get('branch')
+    if expected and here != expected:
+        raise Refused(f'{task["id"]} is built on {expected}, but you are on {here or "a detached HEAD"}: `git switch {expected}`')
+    if not expected and here == settings['base']:
+        raise Refused(f'{task["id"]} has no task branch and you are on {settings["base"]}: '
+                      f'`git switch -c {branch_name(task)}`, then run the command again')
+    task['branch'] = expected or here
 
 
 def cmd_verify(root, args):
@@ -723,6 +939,7 @@ def cmd_verify(root, args):
                           + (f' ({", ".join(others)} is in progress)' if others else ' (`start` it first)'))
         if not task.get('acceptance') or not task.get('verification'):
             raise Refused(f'{task["id"]} needs acceptance criteria and its own checks: `edit {task["id"]} --accept ... --check ...`')
+        require_task_branch(state, task, delivery(state))
         checks = state.checks()
         order = run_order(state, task)
         missing = [check_id for check_id in order if check_id not in checks]
@@ -801,31 +1018,228 @@ def parse_proof(items, task):
 
 
 def cmd_done(root, args):
+    resumed = merged = False
     with Lock(root):
         state = State(root)
         task = state.task(args.id)
-        if task.get('state') != 'verified':
-            raise Refused(f'{task["id"]} is {task.get("state")}; `verify {task["id"]}` must pass first')
-        proof = parse_proof(args.proof, task)
-        reason = stale_reason(state, task)
-        if reason:
-            raise Refused(f'{task["id"]} evidence is stale ({reason}); run `verify {task["id"]}` again')
-        if task.get('review') and not review_passed(state, task):
-            raise Refused(f'{task["id"]} needs an independent review of the current files: a reviewer with fresh context '
-                          f'reads `show {task["id"]}` and `git diff`, then records `review {task["id"]} --pass|--fail --summary "..."`')
-        commit = None
-        pending = uncommitted(root)
-        if pending is not None:
-            if pending:
-                raise Refused('commit the verified change first; uncommitted: ' + ', '.join(pending[:5])
-                              + (' ...' if len(pending) > 5 else ''))
-            commit = (git(root, 'rev-parse', '--short', 'HEAD') or '').strip() or None
-        task['state'] = 'passing'
-        task['evidence'].update({'commit': commit, 'doneAt': now(), 'proof': proof})
-        state.save()
-        ready = state.ready()
-    print(f'{task["id"]} passing' + (f' at {commit}' if commit else ''))
-    print('next: ' + (f'`start {ready[0]["id"]}`' if ready else '`status`') + '; commit docs/tasks.json with your next change')
+        settings = delivery(state)
+        info = task.get('delivery') or {}
+        if settings['mode'] == 'pr' and task.get('state') == 'passing' and info.get('mode') == 'pr':
+            git(root, 'fetch', '--quiet', 'origin', info.get('base') or settings['base'])
+            state.forget_base()
+            merged, resumed = not unmerged(state, task), True
+            done_at = (task.get('evidence') or {}).get('commit')
+            changed = git(root, 'diff', '--name-only', done_at, f'refs/heads/{info.get("branch")}') if done_at else None
+            later = [name for name in (changed or '').splitlines() if not name.startswith(BOOKKEEPING)]
+            if later and not merged:
+                raise Refused(f'{task["id"]} changed after done ({", ".join(later[:5])}): `reopen {task["id"]} --reason "..."`, '
+                              f'then verify, commit and `done {task["id"]} --proof ...`')
+        else:
+            if task.get('state') != 'verified':
+                raise Refused(f'{task["id"]} is {task.get("state")}; `verify {task["id"]}` must pass first')
+            proof = parse_proof(args.proof, task)
+            reason = stale_reason(state, task)
+            if reason:
+                raise Refused(f'{task["id"]} evidence is stale ({reason}); run `verify {task["id"]}` again')
+            if task.get('review') and not review_passed(state, task):
+                raise Refused(f'{task["id"]} needs an independent review of the current files: a reviewer with fresh context '
+                              f'reads `show {task["id"]}` and `git diff`, then records `review {task["id"]} --pass|--fail --summary "..."`')
+            commit = None
+            pending = uncommitted(root)
+            if pending is not None:
+                if pending:
+                    raise Refused('commit the verified change first; uncommitted: ' + ', '.join(pending[:5])
+                                  + (' ...' if len(pending) > 5 else ''))
+                commit = (git(root, 'rev-parse', '--short', 'HEAD') or '').strip() or None
+            if settings['mode'] == 'pr':
+                require_task_branch(state, task, settings)
+                if not task.get('initial') and task['branch'] == settings['base']:
+                    raise Refused(f'{task["id"]} is on {settings["base"]}, which changes only through pull requests: '
+                                  f'`git switch -c {branch_name(task)}`, then `done {task["id"]}` again')
+                task['delivery'] = {'mode': 'pr', 'branch': task['branch'], 'base': settings['base'],
+                                    'initial': bool(task.get('initial'))}
+            task['state'] = 'passing'
+            task['evidence'].update({'commit': commit, 'doneAt': now(), 'proof': proof})
+            state.save()
+            if settings['mode'] != 'pr':
+                ready = state.ready()
+                print(f'{task["id"]} passing' + (f' at {commit}' if commit else ''))
+                print('next: ' + (f'`start {ready[0]["id"]}`' if ready else '`status`')
+                      + '; commit docs/tasks.json with your next change')
+                return 0
+    if merged:
+        base = info.get('base') or settings['base']
+        if info.get('initial') or current_branch(root) != info.get('branch'):
+            print(f'{args.id} is already merged into {base}')
+            return 0
+        return finish_merge(root, args.id, info['branch'], base, None)
+    return deliver(root, args.id, settings, resumed)
+
+
+def pr_title(task):
+    return f'{task.get("type") or "feat"}: {shorten(task.get("behavior"), 60)} ({task["id"]})'
+
+
+def pr_body(task):
+    evidence = task.get('evidence') or {}
+    proof = evidence.get('proof') or {}
+    lines = [f'Task {task["id"]}: {task.get("behavior")}', '', 'Acceptance and what proves it:']
+    lines += [f'{index}. {item}: {proof.get(str(index), "not named")}'
+              for index, item in enumerate(task.get('acceptance') or [], 1)]
+    checks = ', '.join(f'{check.get("id")} {check.get("outcome")}' for check in evidence.get('checks') or [])
+    lines += ['', f'Local verify at {evidence.get("at")}: {checks or "no checks recorded"}']
+    review = evidence.get('review')
+    if review:
+        lines.append(f'Review: {review.get("result")} by {review.get("by")}: {review.get("summary")}')
+    if task.get('keep'):
+        lines.append('Must not change: ' + '; '.join(task['keep']))
+    if task.get('refs'):
+        lines.append('Refs: ' + ', '.join(task['refs']))
+    lines += ['', 'Opened by scripts/harness.py, which merges it after the checks pass.']
+    return '\n'.join(lines) + '\n'
+
+
+def pull_request(root, branch):
+    shown = gh(root, 'pr', 'view', branch, '--json', 'number,url,state,headRefOid')
+    if shown.returncode != 0:
+        return None
+    try:
+        return json.loads(shown.stdout)
+    except ValueError:
+        return None
+
+
+def wait_for_checks(root, number_, settings):
+    """('pass' | 'fail' | 'pending', checks) or ('error', gh output) once nothing is pending or this call's wait is over."""
+    started = time.monotonic()
+    workflows = root / '.github/workflows'
+    expect_checks = workflows.is_dir() and any('pull_request' in path.read_text(encoding='utf-8', errors='replace')
+                                               for path in workflows.glob('*.y*ml'))
+    while True:
+        result = gh(root, 'pr', 'checks', str(number_), '--json', 'name,bucket,link')
+        elapsed = time.monotonic() - started
+        try:
+            checks = json.loads(result.stdout)
+        except ValueError:
+            if 'no checks reported' not in result.stderr:  # not logged in, network, rate limit: never read as "no checks"
+                return 'error', (result.stderr or result.stdout).strip()[-400:]
+            checks = []
+        if not checks:
+            if expect_checks and elapsed < min(settings['register'], settings['wait']):
+                time.sleep(settings['poll'])
+                continue
+            return 'pass', []
+        failed = [check for check in checks if check.get('bucket') in ('fail', 'cancel')]
+        pending = [check for check in checks if check.get('bucket') == 'pending']
+        if failed:
+            return 'fail', failed
+        if not pending:
+            return 'pass', checks
+        if elapsed >= settings['wait']:
+            return 'pending', pending
+        time.sleep(settings['poll'])
+
+
+def deliver(root, task_id, settings, resumed):
+    """Push the task branch, open its pull request, wait for the checks, and merge the verified commit."""
+    task = State(root).task(task_id)
+    info = task['delivery']
+    branch, base = info['branch'], info.get('base') or settings['base']
+    env = dict(os.environ, HARNESS_BASE_PUSH='1') if info.get('initial') else None
+    try:
+        if current_branch(root) == branch and git(root, 'status', '--porcelain', '--', TASKS):
+            git_or_refuse(root, 'add', TASKS)
+            git_or_refuse(root, 'commit', '--quiet', '-m', f'chore: mark {task_id} passing', '--', TASKS)
+        git_or_refuse(root, 'push', '--quiet', '-u', 'origin', f'{branch}:{branch}', env=env)
+    except Refused as error:
+        print(f'{task_id} is passing locally but not delivered: {error}')
+        print(f'next: fix the push problem, then `done {task_id}` again')
+        return 1
+    if info.get('initial'):
+        print(f'{task_id} passing; pushed {branch} to origin (first delivery)')
+        return 0
+    head = (git(root, 'rev-parse', f'refs/heads/{branch}') or '').strip()
+    if not shutil.which('gh'):
+        print(f'{task_id} is pushed to {branch}, but the GitHub CLI (gh) is not installed: '
+              f'install it, run `gh auth login`, then `done {task_id}` again')
+        return 1
+    pr = pull_request(root, branch)
+    if resumed and pr is not None and pr.get('state') == 'CLOSED':
+        print(f'{pr["url"]} was closed without merging. Ask the user why, then `reopen {task_id} --reason "..."` '
+              f'to change the work (and `drop` it after reopening if it is not wanted)')
+        return 1
+    if pr is None or pr.get('state') == 'CLOSED':
+        body = root / RUNS / f'{task_id}-pull-request.md'
+        body.parent.mkdir(parents=True, exist_ok=True)
+        body.write_text(pr_body(task), encoding='utf-8')
+        created = gh(root, 'pr', 'create', '--base', base, '--head', branch, '--title', pr_title(task),
+                     '--body-file', str(body))
+        if created.returncode != 0:
+            print(f'could not open a pull request: {(created.stderr or created.stdout).strip()[-400:]}')
+            print(f'next: fix that (for example `gh auth login`), then `done {task_id}` again')
+            return 1
+        pr = pull_request(root, branch)
+        if pr is None:
+            print(f'opened a pull request for {branch}, but could not read it back; run `done {task_id}` again')
+            return 1
+    print(f'pull request: {pr["url"]}')
+    if pr.get('state') != 'MERGED':
+        outcome, checks = wait_for_checks(root, pr['number'], settings)
+        if outcome == 'error':
+            print(f'could not read the checks: {checks}')
+            print(f'next: fix that (for example `gh auth login`), then `done {task_id}` again')
+            return 1
+        if outcome == 'fail':
+            names = ', '.join(f'{check.get("name")} ({check.get("link")})' for check in checks)
+            with Lock(root):
+                state = State(root)
+                failed = state.task(task_id)
+                failed['state'] = 'active'
+                failed.setdefault('notes', []).append(f'{now()[:10]} checks failed on {pr["url"]}: {names}')
+                state.save()
+            print(f'checks failed: {names}')
+            print(f'{task_id} is active again. next: read the failure (the link, or `gh run view RUN_ID --log-failed`), fix it, commit, '
+                  f'`verify {task_id}`, then `done {task_id} --proof ...`')
+            return 1
+        if outcome == 'pending':
+            print('checks are still running: ' + ', '.join(check.get('name', '?') for check in checks))
+            print(f'next: `done {task_id}` again to wait for them and merge')
+            return 1
+        print('checks: ' + (', '.join(f'{check.get("name")} {check.get("bucket")}' for check in checks) or 'none reported'))
+        attempt = gh(root, 'pr', 'merge', str(pr['number']), f'--{settings["merge"]}', '--delete-branch',
+                     '--match-head-commit', head)
+        # the exit code is not the answer: a merge queue exits 0 without merging, and gh can fail after merging
+        pr = pull_request(root, str(pr['number'])) or pr
+        if pr.get('state') != 'MERGED':
+            detail = (attempt.stderr or attempt.stdout).strip()[-400:] or 'GitHub accepted the merge request'
+            print(f'{task_id} is not merged yet: {detail}')
+            print(f'next: a required approval needs the user; a conflict needs `git merge origin/{base}`, `reopen {task_id}`, '
+                  f'verify and `done`; a merge queue or new checks need `done {task_id}` again later')
+            return 1
+    return finish_merge(root, task_id, branch, base, pr['url'])
+
+
+def finish_merge(root, task_id, branch, base, url):
+    """Switch to the updated base branch and delete the task branch; uncommitted queue changes are kept."""
+    state = State(root)
+    queue_changed = bool(git(root, 'status', '--porcelain', '--', TASKS))
+    git(root, 'checkout', '--', TASKS)
+    if current_branch(root) != base and git(root, 'switch', base) is None:
+        git(root, 'switch', '-c', base, f'origin/{base}')
+    pulled = git(root, 'pull', '--ff-only', '--quiet', 'origin', base)
+    if queue_changed:
+        with Lock(root):
+            state.save()
+    if current_branch(root) != branch:
+        git(root, 'branch', '-D', branch)
+        git(root, 'branch', '-D', '-r', f'origin/{branch}')
+    print(f'{task_id} merged into {base}' + (f': {url}' if url else ''))
+    if current_branch(root) != base:
+        print(f'note: could not switch to {base}; run `git switch {base}` and `git pull --ff-only origin {base}`')
+    elif pulled is None:
+        print(f'note: could not fast-forward local {base}; run `git pull --ff-only origin {base}`')
+    ready = State(root).ready()
+    print('next: ' + (f'`start {ready[0]["id"]}`' if ready else '`status`'))
     return 0
 
 
@@ -893,6 +1307,9 @@ def cmd_wrapup(root, args):
     pending = uncommitted(root) or []
     if pending and not args.note:
         found.append(f'{len(pending)} uncommitted paths and no --note explaining them')
+    settings = delivery(state)
+    if settings['mode'] == 'pr' and pending and current_branch(root) == settings['base']:
+        found.append(f'uncommitted changes on {settings["base"]}, which changes only through pull requests; move them to a task')
     with Lock(root):
         state = State(root)
         for task in state.with_state('active', 'verified'):
@@ -927,11 +1344,13 @@ def parser():
     task_id = (['id'], {'help': 'task id, e.g. F001'})
     many = {'action': 'append', 'default': []}
     keep_help = 'what must not change while the task is built: a path glob such as public/* or a behavior (repeat)'
+    type_help = 'kind of change; names the branch and the pull request title'
     command('status', cmd_status, 'where things stand and the next step; start every session here')
     command('list', cmd_list, 'one line per open task', (['--all'], {'action': 'store_true', 'help': 'include passing and dropped tasks'}))
     command('show', cmd_show, 'full detail, evidence and notes for one task', task_id)
     command('add', cmd_add, 'queue a task',
             (['behavior'], {'help': 'observable outcome, one sentence'}),
+            (['--type'], {'choices': TYPES, 'default': 'feat', 'help': type_help}),
             (['--accept'], dict(many, help='acceptance criterion (repeat)')),
             (['--check'], dict(many, help='check id from docs/config.json (repeat)')),
             (['--after'], dict(many, help='task id this depends on (repeat)')),
@@ -939,7 +1358,8 @@ def parser():
             (['--keep'], dict(many, help=keep_help)),
             (['--review'], {'action': 'store_true', 'help': 'require an independent review before done'}))
     command('edit', cmd_edit, 'change a task; each list option replaces the list ("none" clears it)', task_id,
-            (['--behavior'], {}), (['--accept'], dict(many)), (['--check'], dict(many)),
+            (['--behavior'], {}), (['--type'], {'choices': TYPES, 'help': type_help}),
+            (['--accept'], dict(many)), (['--check'], dict(many)),
             (['--after'], dict(many)), (['--ref'], dict(many)), (['--keep'], dict(many, help=keep_help)),
             (['--review'], {'choices': ['on', 'off'], 'help': 'require an independent review before done'}))
     command('review', cmd_review, 'record an independent review of a verified task', task_id,
@@ -949,9 +1369,9 @@ def parser():
             (['--by'], {'default': 'reviewer', 'help': 'who reviewed, e.g. subagent or a name'}))
     command('wrapup', cmd_wrapup, 'end-of-session check: required checks, debug leftovers, uncommitted work',
             (['--note'], {'help': 'what is done and what is next; required while a task is in progress'}))
-    command('start', cmd_start, 'make a ready task active (one task in progress at a time)', task_id)
+    command('start', cmd_start, 'make a ready task active on its own branch (one task in progress at a time)', task_id)
     command('verify', cmd_verify, 'run the task checks plus required checks and record the result', task_id)
-    command('done', cmd_done, 'mark a freshly verified, committed task passing', task_id,
+    command('done', cmd_done, 'finish a verified, committed task: push, pull request, checks, merge', task_id,
             (['--proof'], dict(many, help='N=test or check that proves acceptance criterion N (one per criterion)')))
     command('block', cmd_block, 'stop a task that cannot proceed', task_id, (['--reason'], {'required': True}))
     command('drop', cmd_drop, 'remove an unfinished task from the plan, keeping its record', task_id,

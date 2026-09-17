@@ -48,8 +48,12 @@ class Repo:
 
     def run(self, *args):
         result = subprocess.run([PY, str(self.root / 'scripts/harness.py'), *args], cwd=self.root,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=120, env=getattr(self, 'env', None))
         return result.returncode, result.stdout + result.stderr
+
+    def branch(self):
+        return subprocess.run(['git', 'branch', '--show-current'], cwd=self.root, capture_output=True,
+                              text=True).stdout.strip()
 
     def tasks(self):
         return {task['id']: task for task in json.loads((self.root / 'docs/tasks.json').read_text())['tasks']}
@@ -283,6 +287,250 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn('F002', out)
         self.assertIn('1 dropped hidden', out)
         self.assertIn('F002', repo.run('list', '--all')[1])
+
+
+FAKE_GH = r'''#!/usr/bin/env python3
+"""A stand-in for the GitHub CLI: pull requests live in a JSON file, merges move refs in the bare origin."""
+import json, os, subprocess, sys
+
+STATE = os.environ['FAKE_GH_STATE']
+state = json.load(open(STATE)) if os.path.exists(STATE) else {'prs': []}
+args = sys.argv[1:]
+
+
+def save():
+    with open(STATE, 'w') as handle:
+        json.dump(state, handle)
+
+
+def origin_git(*command):
+    origin = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(['git', '--git-dir', origin, *command], capture_output=True, text=True)
+
+
+def find(key):
+    return next((pr for pr in reversed(state['prs']) if key in (str(pr['number']), pr['head'])), None)
+
+
+if args[:2] == ['pr', 'view']:
+    pr = find(args[2])
+    if pr is None:
+        sys.exit('no pull requests found for branch ' + args[2])
+    head = origin_git('rev-parse', '--verify', '--quiet', 'refs/heads/' + pr['head']).stdout.strip()
+    print(json.dumps({'number': pr['number'], 'url': pr['url'], 'state': pr['state'], 'headRefOid': head}))
+elif args[:2] == ['pr', 'create']:
+    options = dict(zip(args[2::2], args[3::2]))
+    pr = {'number': len(state['prs']) + 1, 'head': options['--head'], 'base': options['--base'],
+          'title': options['--title'], 'state': 'OPEN'}
+    pr['url'] = 'https://github.test/pull/%d' % pr['number']
+    state['prs'].append(pr)
+    save()
+    print(pr['url'])
+elif args[:2] == ['pr', 'checks']:
+    mode = os.environ.get('FAKE_GH_CHECKS', 'pass')
+    if mode == 'none':
+        sys.exit("no checks reported on the 'branch' branch")
+    if mode == 'error':
+        sys.exit('HTTP 401: Bad credentials (https://api.github.com/graphql)')
+    print(json.dumps([{'name': 'ci', 'bucket': mode, 'link': 'https://ci.test/run/1'}]))
+    sys.exit({'pass': 0, 'fail': 1, 'pending': 8}[mode])
+elif args[:2] == ['pr', 'merge']:
+    pr = find(args[2])
+    head = origin_git('rev-parse', 'refs/heads/' + pr['head']).stdout.strip()
+    if head != args[args.index('--match-head-commit') + 1]:
+        sys.exit('head commit does not match')
+    if os.environ.get('FAKE_GH_MERGE') == 'queue':  # a merge queue accepts the request and merges later
+        sys.exit(0)
+    origin_git('update-ref', 'refs/heads/' + pr['base'], head)
+    origin_git('update-ref', '-d', 'refs/heads/' + pr['head'])
+    pr['state'] = 'MERGED'
+    save()
+    if os.environ.get('FAKE_GH_MERGE') == 'fail-after-merge':  # gh merged, then its local branch cleanup failed
+        sys.exit('failed to delete local branch')
+else:
+    sys.exit('fake gh does not support: ' + ' '.join(args))
+'''
+
+
+class RemoteRepo(Repo):
+    """A Repo with a bare local `origin` and the fake GitHub CLI first on PATH."""
+
+    def __init__(self, test, checks, empty_remote=False, delivery=None):
+        super().__init__(test, checks)
+        if delivery:
+            config = json.loads((self.root / 'docs/config.json').read_text())
+            config['delivery'] = delivery
+            self.write('docs/config.json', config)
+            self.commit('delivery settings')
+        directory = tempfile.TemporaryDirectory(prefix='harness-remote-')
+        test.addCleanup(directory.cleanup)
+        home = Path(directory.name)
+        self.origin = home / 'origin.git'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], check=True)
+        self.git('remote', 'add', 'origin', str(self.origin))
+        if not empty_remote:
+            self.git('push', '-q', 'origin', 'main')
+        tools = home / 'bin'
+        tools.mkdir()
+        (tools / 'gh').write_text(FAKE_GH)
+        (tools / 'gh').chmod(0o755)
+        self.env = dict(os.environ, PATH=f'{tools}{os.pathsep}{os.environ["PATH"]}', FAKE_GH_STATE=str(home / 'gh.json'),
+                        HARNESS_POLL_SECONDS='0.05', HARNESS_CHECKS_REGISTER_SECONDS='0',
+                        GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.com',
+                        GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@example.com')
+
+    def origin_file(self, path):
+        shown = subprocess.run(['git', '--git-dir', str(self.origin), 'show', f'main:{path}'],
+                               capture_output=True, text=True)
+        return shown.stdout if shown.returncode == 0 else None
+
+    def pull_requests(self):
+        path = Path(self.env['FAKE_GH_STATE'])
+        return json.loads(path.read_text())['prs'] if path.exists() else []
+
+
+class DeliveryTest(unittest.TestCase):
+    def finish_work(self, repo, task='F001'):
+        (repo.root / 'feature.txt').write_text('done\n')
+        self.assertEqual(repo.run('verify', task)[0], 0)
+        repo.commit('add the feature')
+
+    def test_task_is_built_on_a_branch_and_merged_through_a_pull_request(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.run('add', 'Feature file exists', '--type', 'feat', '--accept', 'feature.txt is present', '--check', 'feature')
+        code, out = repo.run('start', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.branch(), 'feat/f001-feature-file-exists')
+        self.assertIn('harness-bootstrap push guard', (repo.root / '.git/hooks/pre-push').read_text())
+        self.finish_work(repo)
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 0, out)
+        self.assertIn('https://github.test/pull/1', out)
+        self.assertEqual(repo.branch(), 'main')
+        self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
+        merged = {task['id']: task['state'] for task in json.loads(repo.origin_file('docs/tasks.json'))['tasks']}
+        self.assertEqual(merged, {'F001': 'passing'})
+        self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['feat: Feature file exists (F001)'])
+        self.assertIn('the queue is empty', repo.run('status')[1])
+
+    def test_failed_checks_return_the_task_to_active_without_merging(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.env['FAKE_GH_CHECKS'] = 'fail'
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('start', 'F001')
+        self.finish_work(repo)
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 1, out)
+        self.assertIn('checks failed: ci', out)
+        self.assertEqual(repo.tasks()['F001']['state'], 'active')
+        self.assertIsNone(repo.origin_file('feature.txt'))
+
+    def test_an_unmerged_pull_request_blocks_new_tasks_until_done_merges_it(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}, {'id': 'ok', 'argv': OK}],
+                          delivery={'mode': 'pr', 'checksWaitSeconds': 0.05})
+        repo.env['FAKE_GH_CHECKS'] = 'pending'
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('add', 'Second thing', '--accept', 'x', '--check', 'ok')
+        repo.run('start', 'F001')
+        self.finish_work(repo)
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 1, out)
+        self.assertIn('still running', out)
+        code, out = repo.run('start', 'F002')
+        self.assertEqual(code, 1, out)
+        self.assertIn('F001 is not merged', out)
+        self.assertIn('waiting for merge: F001', repo.run('status')[1])
+        subprocess.run(['git', 'switch', '-q', 'main'], cwd=repo.root, check=True)
+        self.assertIn('next: `git switch feat/f001-feature-file-exists`', repo.run('status')[1])
+        subprocess.run(['git', 'switch', '-q', 'feat/f001-feature-file-exists'], cwd=repo.root, check=True)
+        repo.write('feature.txt', 'changed after done\n')
+        repo.commit('late change')
+        code, out = repo.run('done', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('changed after done (feature.txt)', out)
+        repo.git('reset', '-q', '--hard', 'HEAD~1')
+        repo.env['FAKE_GH_CHECKS'] = 'pass'
+        code, out = repo.run('done', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.run('start', 'F002')[0], 0)
+        self.assertEqual(repo.branch(), 'feat/f002-second-thing')
+
+    def test_merge_counts_only_when_github_reports_it_merged(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('start', 'F001')
+        self.finish_work(repo)
+        repo.env['FAKE_GH_CHECKS'] = 'error'
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 1, out)
+        self.assertIn('could not read the checks: HTTP 401', out)
+        repo.env.update(FAKE_GH_CHECKS='pass', FAKE_GH_MERGE='queue')
+        code, out = repo.run('done', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('F001 is not merged yet', out)
+        self.assertIsNone(repo.origin_file('feature.txt'))
+        gh_state = Path(repo.env['FAKE_GH_STATE'])
+        gh_state.write_text(gh_state.read_text().replace('"OPEN"', '"CLOSED"'))
+        code, out = repo.run('done', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('closed without merging', out)
+        self.assertEqual(repo.run('reopen', 'F001', '--reason', 'the user wants it after all')[0], 0)
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+        repo.env['FAKE_GH_MERGE'] = 'fail-after-merge'
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 0, out)
+        self.assertIn('merged into main: https://github.test/pull/2', out)
+        self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
+        self.assertEqual(repo.branch(), 'main')
+
+    def test_first_delivery_pushes_the_base_branch_when_origin_has_none(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}], empty_remote=True)
+        repo.run('add', 'Walking skeleton', '--accept', 'feature.txt is present', '--check', 'feature')
+        code, out = repo.run('start', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('first delivery', out)
+        self.assertEqual(repo.branch(), 'main')
+        self.finish_work(repo)
+        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
+        self.assertEqual(repo.pull_requests(), [])
+        repo.run('add', 'Next change', '--accept', 'x', '--check', 'feature')
+        self.assertEqual(repo.run('start', 'F002')[0], 0)
+        self.assertEqual(repo.branch(), 'feat/f002-next-change')
+
+    def test_direct_push_to_the_base_branch_is_blocked(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('start', 'F001')
+        subprocess.run(['git', 'switch', '-q', 'main'], cwd=repo.root, check=True)
+        repo.write('hotfix.txt', 'quick fix\n')
+        repo.commit('hotfix straight to main')
+        pushed = subprocess.run(['git', 'push', 'origin', 'main'], cwd=repo.root, capture_output=True, text=True)
+        self.assertNotEqual(pushed.returncode, 0)
+        self.assertIn('only through pull requests', pushed.stderr)
+        self.assertIsNone(repo.origin_file('hotfix.txt'))
+
+    def test_start_refuses_until_the_harness_is_merged_into_the_base_branch(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        empty = subprocess.run(['git', 'commit-tree', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', '-m', 'before the harness'],
+                               cwd=repo.root, capture_output=True, text=True, env=repo.env, check=True).stdout.strip()
+        subprocess.run(['git', 'push', '-q', '-f', 'origin', f'{empty}:refs/heads/main'], cwd=repo.root, check=True)
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        code, out = repo.run('start', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('origin/main has no docs/tasks.json', out)
+        self.assertEqual(repo.branch(), 'main')
+        self.assertTrue((repo.root / 'scripts/harness.py').exists())
+
+    def test_verify_refuses_outside_the_task_branch(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('start', 'F001')
+        subprocess.run(['git', 'switch', '-q', 'main'], cwd=repo.root, check=True)
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('git switch feat/f001-feature-file-exists', out)
 
 
 def bootstrap(*args):
