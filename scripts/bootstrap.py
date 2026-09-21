@@ -100,6 +100,12 @@ def inspect(root):
         print(f'git: branch {run(root, "git", "branch", "--show-current") or "?"}, '
               f'{run(root, "git", "rev-list", "--count", "HEAD") or 0} commits, {dirty} uncommitted paths, '
               f'remotes: {", ".join(remotes) or "none"}')
+    if shutil.which('gh'):
+        # --active: a broken inactive account makes plain `gh auth status` fail; older gh has no --active
+        logged_in = run(root, 'gh', 'auth', 'status', '--active') is not None or run(root, 'gh', 'auth', 'status') is not None
+        print('github cli: ' + ('logged in' if logged_in else 'not logged in; pull-request delivery needs `gh auth login`'))
+    else:
+        print('github cli: not installed; pull-request delivery needs it')
     tools = []
     for tool, flag in TOOLS:
         if shutil.which(tool):
@@ -227,8 +233,12 @@ def install(root, dry_run, claude):
             write_text(agents_path, agents.replace(current, block))
     managed('AGENTS.md#harness', current, block, write_block, respect_removal=True)
 
+    remote_head = run(root, 'git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD') or ''
+    base = remote_head.split('/', 1)[1] if '/' in remote_head else (run(root, 'git', 'branch', '--show-current') or 'main')
+    config = {'schemaVersion': 2, 'checks': [],
+              'delivery': {'mode': 'pr', 'base': base, 'merge': 'squash', 'checksWaitSeconds': 90}}
     for relative, default in (('docs/tasks.json', {'schemaVersion': 2, 'nextId': 1, 'tasks': []}),
-                              ('docs/config.json', {'schemaVersion': 2, 'checks': []})):
+                              ('docs/config.json', config)):
         if (root / relative).exists():
             report.append(('kept', relative))
         else:

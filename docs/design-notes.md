@@ -62,7 +62,16 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
 
 - **Python 3.8+ where agents work** (confirmed by the user on 2026-09-15). It reverses the 1.x rule against requiring Python in Node projects; one tested runner is worth the dependency.
 
+- **Every change after the first delivery goes through a pull request** (the user's decision on 2026-09-17, after 2.0 made pushes and PRs opt-in).
+  - `start` cuts a branch per task from `origin/<base>`.
+  - `done` commits the passing state on that branch, pushes, opens the pull request, waits for `gh pr checks`, and merges with `--match-head-commit`.
+  - One `done` call waits at most 90 seconds, because agent tools often stop commands after 2 minutes; the agent runs `done` again.
+  - A merge counts only when GitHub reports the pull request as merged: a merge queue exits 0 without merging, and `gh` can exit 1 after merging.
+  - A pre-push hook blocks direct pushes to the base branch.
+  - A task counts as in progress until its pull request is merged, read from `docs/tasks.json` on `origin/<base>`.
+  - Only the first delivery to an empty remote pushes the base branch directly.
+  - Cost: needs `gh`; the hook is per clone. Checked by delivery tests against a bare local remote and a fake `gh`.
+
 ## Decisions to revisit
 
-1. `passing` no longer means "merged with green CI". Repositories that need that should gate merges in CI.
-2. `docs/harness-sequence.png` still shows the 1.x flow.
+1. `docs/harness-sequence.png` still shows the 1.x flow.
