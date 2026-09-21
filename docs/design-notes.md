@@ -56,7 +56,7 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
 - **A Node twin of the runner:** a second implementation to keep identical. Python 3 is present on nearly every development machine and agent sandbox. Ported runners remain possible, but the tests are Python.
 - **A separate evaluator for every task:** Anthropic's full harness cost about 22× a solo run and helped mainly near the model's limit. Review is opt-in per task (`--review`) instead.
 - **Running a task's checks at `start` to prove they fail first:** slow for build or browser suites. `--proof` at `done` is the cheaper guard; revisit if evaluations show false completions.
-- **A GitHub `deliver` command and `archive`:** outward actions stay under the user's authorization. `status` stays short without archiving.
+- **`archive`:** `status` stays short without archiving.
 
 ## Decisions
 
@@ -69,8 +69,18 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
   - A merge counts only when GitHub reports the pull request as merged: a merge queue exits 0 without merging, and `gh` can exit 1 after merging.
   - A pre-push hook blocks direct pushes to the base branch.
   - A task counts as in progress until its pull request is merged, read from `docs/tasks.json` on `origin/<base>`.
-  - Only the first delivery to an empty remote pushes the base branch directly.
+  - The harness commit is the only direct push to the base branch.
   - Cost: needs `gh`; the hook is per clone. Checked by delivery tests against a bare local remote and a fake `gh`.
+
+- **Bootstrap creates the GitHub repository** (the user's decision on 2026-09-21).
+  - The repository is private, under the account `gh` uses, and named after the folder.
+  - The harness commit is pushed directly; the walking skeleton then goes through a pull request like every task.
+  - This replaces the first-delivery path, where F001 was built on the base branch and pushed directly.
+- **Commit hooks** (the user's decision on 2026-09-21).
+  - A pre-commit hook runs the checks marked `precommit`.
+  - New Node projects get husky, so the hooks are committed and reach every clone that runs `npm install`.
+  - The push guard moved from a generated shell script into `harness.py hook pre-push`, so one line works in `.git/hooks` and in husky files.
+  - Cost: a Python start plus the fast checks on every commit.
 
 ## Decisions to revisit
 

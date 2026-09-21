@@ -145,3 +145,19 @@ Not tested against real GitHub:
 - merge queues;
 - check suites that take time to appear after a push;
 - squash-merge history.
+
+## 8. Repository creation and commit hooks (2026-09-21, not re-run with agents)
+
+- New projects: SKILL.md step 6 creates a private GitHub repository and pushes the harness commit. F001 then goes through a pull request.
+- `harness.py hook`: `pre-commit` runs the checks marked `precommit`, and `pre-push` blocks pushes to the base branch. `start` installs both, into `.husky/` when husky runs the hooks.
+
+| Check | Result |
+|---|---|
+| `python3 -m unittest discover -s evals -p 'test_*.py'` | 26 tests OK on Python 3.14.7 and 3.9.6 |
+| 16 deliberate bugs in a copy of the runner, 6 of them in the new hook and first-push code | each one made a test fail |
+| Real husky 9.1.7 in a scratch project: `husky init`, `hook install`, a commit while a `precommit` check fails, `git push origin main`, `git push origin HEAD:main`, the `HARNESS_BASE_PUSH=1` push, a push to a task branch | the commit and both pushes to main were blocked; the override and the task-branch push went through |
+
+Not tested:
+- `gh repo create`, because it would create a real repository;
+- husky 8 and older;
+- hooks on Windows.

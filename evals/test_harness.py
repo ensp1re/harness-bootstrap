@@ -389,6 +389,41 @@ class RemoteRepo(Repo):
         return json.loads(path.read_text())['prs'] if path.exists() else []
 
 
+class HookTest(unittest.TestCase):
+    def commit(self, repo, message):
+        subprocess.run(['git', 'add', '-A'], cwd=repo.root, check=True)
+        return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', message],
+                              cwd=repo.root, capture_output=True, text=True)
+
+    def test_pre_commit_hook_blocks_a_commit_while_a_precommit_check_fails(self):
+        clean = [PY, '-c', "import pathlib, sys; sys.exit(1 if pathlib.Path('bad.txt').exists() else 0)"]
+        repo = Repo(self, [{'id': 'lint', 'argv': clean, 'precommit': True}, {'id': 'ok', 'argv': OK}])
+        repo.run('add', 'Something', '--accept', 'x', '--check', 'ok')
+        self.assertEqual(repo.run('start', 'F001')[0], 0)
+        repo.write('bad.txt', 'a lint error\n')
+        blocked = self.commit(repo, 'with a lint error')
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn('pre-commit: lint failed', blocked.stderr)
+        (repo.root / 'bad.txt').unlink()
+        repo.write('good.txt', 'fine\n')
+        committed = self.commit(repo, 'clean')
+        self.assertEqual(committed.returncode, 0, committed.stderr)
+
+    def test_husky_projects_get_the_hook_lines_in_their_husky_files(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK}])
+        repo.write('.husky/pre-commit', 'npx lint-staged\n')
+        repo.commit('husky')
+        repo.git('config', 'core.hooksPath', '.husky/_')
+        repo.run('add', 'Something', '--accept', 'x', '--check', 'ok')
+        code, out = repo.run('start', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.run('hook', 'install')[0], 0)
+        self.assertEqual((repo.root / '.husky/pre-commit').read_text(),
+                         'npx lint-staged\npython3 scripts/harness.py hook pre-commit\n')
+        self.assertEqual((repo.root / '.husky/pre-push').read_text(), '#!/bin/sh\npython3 scripts/harness.py hook pre-push\n')
+        self.assertFalse((repo.root / '.git/hooks/pre-push').exists())
+
+
 class DeliveryTest(unittest.TestCase):
     def finish_work(self, repo, task='F001'):
         (repo.root / 'feature.txt').write_text('done\n')
@@ -401,7 +436,7 @@ class DeliveryTest(unittest.TestCase):
         code, out = repo.run('start', 'F001')
         self.assertEqual(code, 0, out)
         self.assertEqual(repo.branch(), 'feat/f001-feature-file-exists')
-        self.assertIn('harness-bootstrap push guard', (repo.root / '.git/hooks/pre-push').read_text())
+        self.assertIn('harness.py hook pre-push', (repo.root / '.git/hooks/pre-push').read_text())
         self.finish_work(repo)
         code, out = repo.run('done', 'F001', '--proof', '1=feature check')
         self.assertEqual(code, 0, out)
@@ -483,21 +518,16 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
         self.assertEqual(repo.branch(), 'main')
 
-    def test_first_delivery_pushes_the_base_branch_when_origin_has_none(self):
+    def test_an_empty_remote_gets_one_direct_push_of_the_harness_then_pull_requests(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}], empty_remote=True)
         repo.run('add', 'Walking skeleton', '--accept', 'feature.txt is present', '--check', 'feature')
         code, out = repo.run('start', 'F001')
-        self.assertEqual(code, 0, out)
-        self.assertIn('first delivery', out)
-        self.assertEqual(repo.branch(), 'main')
-        self.finish_work(repo)
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
-        self.assertEqual(code, 0, out)
-        self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
-        self.assertEqual(repo.pull_requests(), [])
-        repo.run('add', 'Next change', '--accept', 'x', '--check', 'feature')
-        self.assertEqual(repo.run('start', 'F002')[0], 0)
-        self.assertEqual(repo.branch(), 'feat/f002-next-change')
+        self.assertEqual(code, 1, out)
+        self.assertIn('`HARNESS_BASE_PUSH=1 git push -u origin main`', out)
+        repo.commit('chore: add agent harness')
+        subprocess.run(['git', 'push', '-q', '-u', 'origin', 'main'], cwd=repo.root, check=True)
+        self.assertEqual(repo.run('start', 'F001')[0], 0)
+        self.assertEqual(repo.branch(), 'feat/f001-walking-skeleton')
 
     def test_direct_push_to_the_base_branch_is_blocked(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
@@ -510,6 +540,9 @@ class DeliveryTest(unittest.TestCase):
         self.assertNotEqual(pushed.returncode, 0)
         self.assertIn('only through pull requests', pushed.stderr)
         self.assertIsNone(repo.origin_file('hotfix.txt'))
+        subprocess.run(['git', 'push', '-q', 'origin', 'main'], cwd=repo.root, check=True,
+                       env=dict(os.environ, HARNESS_BASE_PUSH='1'))  # the documented override for the one direct push
+        self.assertEqual(repo.origin_file('hotfix.txt'), 'quick fix\n')
 
     def test_start_refuses_until_the_harness_is_merged_into_the_base_branch(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
