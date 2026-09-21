@@ -31,15 +31,11 @@ TAIL_LINES = 30
 TASK_ID = re.compile(r'F\d{3,}')
 EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'  # git's empty tree, the base for repos without commits
 DEBUG_LEFTOVER = re.compile(r'console\.log\(|\bdebugger\b|breakpoint\(\)|pdb\.set_trace\(|binding\.pry|\bdbg!\(|\b(TODO|FIXME|XXX)\b')
-PUSH_GUARD = '''#!/bin/sh
-# harness-bootstrap push guard: {base} changes only through pull requests.
-while read local_ref local_sha remote_ref remote_sha; do
-  if [ "$remote_ref" = "refs/heads/{base}" ] && [ "$HARNESS_BASE_PUSH" != "1" ]; then
-    echo "Blocked by the harness: {base} changes only through pull requests. Finish the task with: python3 scripts/harness.py done ID" >&2
-    exit 1
-  fi
-done
-exit 0
+HOOKS = ('pre-commit', 'pre-push')
+HOOK_SCRIPT = '''#!/bin/sh
+# harness-bootstrap hook: git runs this file; the check itself is `harness.py hook {name}`
+[ -f scripts/harness.py ] || exit 0
+exec python3 scripts/harness.py hook {name}
 '''
 
 
@@ -150,9 +146,9 @@ def git(root, *args):
     return result.stdout if result.returncode == 0 else None
 
 
-def git_or_refuse(root, *args, env=None):
+def git_or_refuse(root, *args):
     try:
-        result = subprocess.run(['git', *args], cwd=root, capture_output=True, text=True, timeout=300, env=env)
+        result = subprocess.run(['git', *args], cwd=root, capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise Refused(f'git {" ".join(args)} failed: {error}')
     if result.returncode != 0:
@@ -493,10 +489,7 @@ def unmerged(state, task):
         return False
     base = info.get('base') or 'main'
     merged = state.base_states(base)
-    if merged is None:
-        return bool(info.get('initial')) and git(state.root, 'rev-parse', '--verify', '--quiet',
-                                                  f'refs/remotes/origin/{base}') is None
-    return merged.get(task.get('id')) != 'passing'
+    return merged is not None and merged.get(task.get('id')) != 'passing'
 
 
 def branch_name(task):
@@ -517,24 +510,44 @@ def branches_elsewhere(state):
     return sorted(found)
 
 
-def ensure_push_guard(root, base):
-    """Install a pre-push hook that refuses direct pushes to the base branch. False when another hook setup owns it."""
-    if git(root, 'config', '--get', 'core.hooksPath'):
-        return False
-    location = (git(root, 'rev-parse', '--git-path', 'hooks/pre-push') or '').strip()
+def ensure_hooks(root):
+    """Make git run `hook pre-commit` and `hook pre-push`: in .husky/ when husky runs the hooks (those files are
+    committed, so every clone that installs dependencies gets them), else in this clone's .git/hooks. Returns notes."""
+    custom = (git(root, 'config', '--get', 'core.hooksPath') or '').strip()
+    husky = custom.startswith('.husky')
+    if custom and not husky:
+        return [f'note: git hooks come from {custom}; add `python3 scripts/harness.py hook pre-commit` and '
+                f'`... hook pre-push` to that setup']
+    location = '.husky' if husky else (git(root, 'rev-parse', '--git-path', 'hooks') or '').strip()
     if not location:
-        return False
-    hook = Path(location) if Path(location).is_absolute() else root / location
-    if hook.exists() and 'harness-bootstrap push guard' not in hook.read_text(encoding='utf-8', errors='replace'):
-        return False
-    hook.parent.mkdir(parents=True, exist_ok=True)
-    hook.write_text(PUSH_GUARD.format(base=base), encoding='utf-8')
-    hook.chmod(0o755)
-    return True
+        return []
+    directory = Path(location) if Path(location).is_absolute() else root / location
+    notes = []
+    for name in HOOKS:
+        hook, line = directory / name, f'python3 scripts/harness.py hook {name}'
+        text = hook.read_text(encoding='utf-8', errors='replace') if hook.exists() else ''
+        if line in text:
+            continue
+        if husky and text:
+            lines = text.rstrip('\n').split('\n')
+            # the push check goes first so it reads the pushed refs; after a shebang line, if there is one
+            at = (1 if lines[0].startswith('#!') else 0) if name == 'pre-push' else len(lines)
+            text = '\n'.join(lines[:at] + [line] + lines[at:]) + '\n'
+        elif husky:
+            text = f'#!/bin/sh\n{line}\n'
+        elif text and 'harness-bootstrap' not in text:
+            notes.append(f'note: kept the existing {name} hook in {location}; add `{line}` to it')
+            continue
+        else:
+            text = HOOK_SCRIPT.format(name=name)
+        directory.mkdir(parents=True, exist_ok=True)
+        hook.write_text(text, encoding='utf-8')
+        hook.chmod(0o755)
+    return notes
 
 
 def prepare_branch(state, task, settings, fresh):
-    """Put the working tree on the task's branch, cut from origin's base. The first delivery to an empty remote stays on base."""
+    """Put the working tree on the task's branch, cut from origin's base."""
     root, base = state.root, settings['base']
     dirty = uncommitted(root)
     if dirty:
@@ -545,14 +558,11 @@ def prepare_branch(state, task, settings, fresh):
     waiting = [other['id'] for other in state.tasks if other is not task and unmerged(state, other)]
     if waiting:
         raise Refused(f'{waiting[0]} is not merged into {base} yet: `done {waiting[0]}` checks its pull request and merges it')
-    notes = [] if ensure_push_guard(root, base) else \
-        [f'note: direct pushes to {base} are not blocked on this clone (another hook setup is in place); protect {base} on GitHub']
+    notes = []
     remote = (git(root, 'rev-parse', '--verify', '--quiet', f'refs/remotes/origin/{base}') or '').strip()
     if not remote:
-        if current_branch(root) != base:
-            raise Refused(f'origin has no {base} branch yet; switch to {base} for the first delivery')
-        task['branch'], task['initial'] = base, True
-        return notes + [f'first delivery: work on {base}; `done` pushes it to origin directly']
+        raise Refused(f'origin has no {base} branch yet: commit the harness on {base} and push it once with '
+                      f'`HARNESS_BASE_PUSH=1 git push -u origin {base}`, the only direct push; then `start` again')
     if git(root, 'cat-file', '-e', f'refs/remotes/origin/{base}:{TASKS}') is None:
         raise Refused(f'origin/{base} has no {TASKS}: merge the harness into {base} through its own pull request first')
     if not fetched:
@@ -579,7 +589,8 @@ def prepare_branch(state, task, settings, fresh):
         except Refused:
             state.save()
             raise
-    task['branch'], task['initial'] = name, False
+    task['branch'] = name
+    task.pop('initial', None)  # written by earlier runners
     # the fork point, so a reused branch is not blamed for what changed on the base branch since
     task['baseCommit'] = (git(root, 'merge-base', 'HEAD', f'refs/remotes/origin/{base}') or remote).strip()
     return notes + [f'branch: {name}']
@@ -856,6 +867,18 @@ def head_commit(root):
     return (git(root, 'rev-parse', 'HEAD') or '').strip() or None
 
 
+def begin_work(state, task, fresh):
+    """Switch to the task's branch (pull-request delivery) or record the starting commit, then check the git hooks."""
+    settings = delivery(state)
+    if settings['mode'] == 'pr':
+        notes = prepare_branch(state, task, settings, fresh)
+    else:
+        notes, task['baseCommit'] = [], head_commit(state.root)
+    if git(state.root, 'rev-parse', '--is-inside-work-tree') is not None:
+        notes += ensure_hooks(state.root)
+    return notes
+
+
 def cmd_start(root, args):
     def change(state, task):
         if task.get('state') not in ('not_started', 'blocked'):
@@ -869,10 +892,7 @@ def cmd_start(root, args):
             raise Refused(f'{task["id"]} waits on {", ".join(waiting)}, which must be passing first')
         if not task.get('acceptance') or not task.get('verification'):
             raise Refused(f'{task["id"]} needs acceptance criteria and at least one check: `edit {task["id"]} --accept ... --check ...`')
-        settings = delivery(state)
-        notes = prepare_branch(state, task, settings, fresh=False) if settings['mode'] == 'pr' else []
-        if settings['mode'] != 'pr' or task.get('initial'):
-            task['baseCommit'] = head_commit(state.root)
+        notes = begin_work(state, task, fresh=False)
         task['state'], task['blockedReason'] = 'active', None
         return '\n'.join([f'started {task["id"]}: {task.get("behavior")}', *notes,
                           f'next: implement it, then `verify {task["id"]}`'])
@@ -896,11 +916,7 @@ def cmd_reopen(root, args):
         busy = [other for other in state.with_state('active', 'verified') if other is not task]
         if busy:
             raise Refused(f'{busy[0]["id"]} is {busy[0]["state"]}; finish or block it first')
-        settings = delivery(state)
-        fresh = task.get('state') == 'passing' and not unmerged(state, task)
-        notes = prepare_branch(state, task, settings, fresh=fresh) if settings['mode'] == 'pr' else []
-        if settings['mode'] != 'pr' or task.get('initial'):
-            task['baseCommit'] = head_commit(state.root)
+        notes = begin_work(state, task, fresh=task.get('state') == 'passing' and not unmerged(state, task))
         task['state'] = 'active'
         task.pop('delivery', None)
         task.setdefault('notes', []).append(f'{now()[:10]} reopened: {args.reason}')
@@ -1053,11 +1069,10 @@ def cmd_done(root, args):
                 commit = (git(root, 'rev-parse', '--short', 'HEAD') or '').strip() or None
             if settings['mode'] == 'pr':
                 require_task_branch(state, task, settings)
-                if not task.get('initial') and task['branch'] == settings['base']:
+                if task['branch'] == settings['base']:
                     raise Refused(f'{task["id"]} is on {settings["base"]}, which changes only through pull requests: '
                                   f'`git switch -c {branch_name(task)}`, then `done {task["id"]}` again')
-                task['delivery'] = {'mode': 'pr', 'branch': task['branch'], 'base': settings['base'],
-                                    'initial': bool(task.get('initial'))}
+                task['delivery'] = {'mode': 'pr', 'branch': task['branch'], 'base': settings['base']}
             task['state'] = 'passing'
             task['evidence'].update({'commit': commit, 'doneAt': now(), 'proof': proof})
             state.save()
@@ -1069,7 +1084,7 @@ def cmd_done(root, args):
                 return 0
     if merged:
         base = info.get('base') or settings['base']
-        if info.get('initial') or current_branch(root) != info.get('branch'):
+        if current_branch(root) != info.get('branch') or info.get('branch') == base:
             print(f'{args.id} is already merged into {base}')
             return 0
         return finish_merge(root, args.id, info['branch'], base, None)
@@ -1145,19 +1160,16 @@ def deliver(root, task_id, settings, resumed):
     task = State(root).task(task_id)
     info = task['delivery']
     branch, base = info['branch'], info.get('base') or settings['base']
-    env = dict(os.environ, HARNESS_BASE_PUSH='1') if info.get('initial') else None
     try:
         if current_branch(root) == branch and git(root, 'status', '--porcelain', '--', TASKS):
             git_or_refuse(root, 'add', TASKS)
-            git_or_refuse(root, 'commit', '--quiet', '-m', f'chore: mark {task_id} passing', '--', TASKS)
-        git_or_refuse(root, 'push', '--quiet', '-u', 'origin', f'{branch}:{branch}', env=env)
+            # only the queue changes here, and verify already ran every check: the pre-commit hook would repeat them
+            git_or_refuse(root, 'commit', '--quiet', '--no-verify', '-m', f'chore: mark {task_id} passing', '--', TASKS)
+        git_or_refuse(root, 'push', '--quiet', '-u', 'origin', f'{branch}:{branch}')
     except Refused as error:
         print(f'{task_id} is passing locally but not delivered: {error}')
         print(f'next: fix the push problem, then `done {task_id}` again')
         return 1
-    if info.get('initial'):
-        print(f'{task_id} passing; pushed {branch} to origin (first delivery)')
-        return 0
     head = (git(root, 'rev-parse', f'refs/heads/{branch}') or '').strip()
     if not shutil.which('gh'):
         print(f'{task_id} is pushed to {branch}, but the GitHub CLI (gh) is not installed: '
@@ -1328,6 +1340,45 @@ def cmd_wrapup(root, args):
     return 0 if not found else 1
 
 
+def cmd_hook(root, args):
+    """Git runs `pre-commit` and `pre-push` through the hooks that `start` installs; `install` sets them up by hand."""
+    if args.name == 'install':
+        if git(root, 'rev-parse', '--is-inside-work-tree') is None:
+            raise Refused('not a git repository')
+        for note in ensure_hooks(root):
+            print(note)
+        print('hooks: pre-commit runs the checks marked "precommit"; pre-push blocks pushes to the base branch')
+        return 0
+    try:
+        state = State(root)
+    except Refused:
+        return 0  # this checkout has no harness state, so there is nothing to enforce
+    if args.name == 'pre-push':
+        settings = delivery(state)
+        if settings['mode'] != 'pr' or os.environ.get('HARNESS_BASE_PUSH') == '1':
+            return 0
+        for line in sys.stdin:  # one line per ref: <local ref> <local sha> <remote ref> <remote sha>
+            fields = line.split()
+            if len(fields) == 4 and fields[2] == f'refs/heads/{settings["base"]}':
+                print(f'Blocked by the harness: {settings["base"]} changes only through pull requests. '
+                      'Finish the task with: python3 scripts/harness.py done ID', file=sys.stderr)
+                return 1
+        return 0
+    runs = root / RUNS
+    runs.mkdir(parents=True, exist_ok=True)
+    stamp = now().replace('-', '').replace(':', '')
+    results = [run_check(root, check, runs / f'precommit-{stamp}-{check["id"]}.log')
+               for check in state.config.get('checks') or []
+               if isinstance(check, dict) and check.get('precommit') and check.get('id') and check.get('argv')]
+    failed = [result for result in results if result['outcome'] != 'passed']
+    for result in failed:
+        print(f'pre-commit: {result["id"]} {result["outcome"]} (exit {result["exit"]}), log {result["log"]}\n'
+              + tail(root / result['log']), file=sys.stderr)
+    if failed:
+        print('fix it and commit again; never skip this hook with --no-verify', file=sys.stderr)
+    return 1 if failed else 0
+
+
 def parser():
     top = argparse.ArgumentParser(prog='harness.py', description=__doc__.splitlines()[0])
     top.add_argument('--root', type=Path, default=Path(__file__).resolve().parent.parent,
@@ -1379,6 +1430,8 @@ def parser():
     command('reopen', cmd_reopen, 'return a verified or passing task to active', task_id, (['--reason'], {'required': True}))
     command('note', cmd_note, 'append a short dated note: decision, finding, or next step', task_id, (['text'], {}))
     command('validate', cmd_validate, 'check docs/tasks.json and docs/config.json for structural problems')
+    command('hook', cmd_hook, 'git hooks: pre-commit runs the checks marked "precommit", pre-push blocks pushes to the '
+            'base branch; `hook install` sets them up (`start` does it too)', (['name'], {'choices': ('install',) + HOOKS}))
     return top
 
 

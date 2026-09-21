@@ -33,6 +33,7 @@ Read this when choosing checks, rerunning bootstrap, migrating a 1.x project, or
 
 ```json
 {"schemaVersion": 2, "checks": [
+  {"id": "lint", "argv": ["npm", "run", "lint"], "required": true, "precommit": true},
   {"id": "unit", "argv": ["npm", "test"], "required": true},
   {"id": "e2e", "argv": ["npx", "playwright", "test"], "timeoutSeconds": 600},
   {"id": "startup", "argv": ["node", "scripts/smoke.mjs"], "wrapup": true}
@@ -42,6 +43,7 @@ Read this when choosing checks, rerunning bootstrap, migrating a 1.x project, or
 - `argv` runs without a shell. Use `["sh", "-c", "..."]` only for pipes or `&&`.
 - `required: true` checks run on every verify and at every wrapup; they catch regressions. Other checks run only for tasks that list them, so a task's own check can target exactly its acceptance.
 - `wrapup: true` checks also run at session end, for example a startup smoke test.
+- `precommit: true` checks run before every commit through the pre-commit hook. Use only fast checks that read files and do not change them (for example `prettier --check`, not `--write`).
 - Optional: `cwd` (default `.`), `timeoutSeconds` (default 900). A timeout kills the check's whole process group.
 - Take commands from the repository first (package scripts, Makefile, CI steps). A check whose tool is not installed yet fails with `missing-command`; the task that sets the tool up makes it pass.
 
@@ -71,7 +73,7 @@ For a web project, every user-visible acceptance criterion gets a browser test. 
 `docs/config.json` may set `"delivery": {"mode": "pr", "base": "main", "merge": "squash", "checksWaitSeconds": 90}`. Without it, the runner uses pull requests whenever the repository has an `origin` remote, into the default branch origin reports (else `main`). `"mode": "local"` keeps finished work local.
 
 With pull requests:
-- **`start`:** fetches origin. It refuses while the tree has uncommitted work, another task's pull request is not merged, or `origin/<base>` has no `docs/tasks.json` yet (merge the harness first). Otherwise it creates `<type>/<id>-<words>` from `origin/<base>`, where the type comes from `add --type` (feat, fix, refactor, perf, docs, test, build, ci, chore). It also installs a pre-push hook that refuses direct pushes to the base branch.
+- **`start`:** fetches origin. It refuses while the tree has uncommitted work, another task's pull request is not merged, or `origin/<base>` has no `docs/tasks.json` yet (merge the harness first). Otherwise it creates `<type>/<id>-<words>` from `origin/<base>`, where the type comes from `add --type` (feat, fix, refactor, perf, docs, test, build, ci, chore). It also installs the git hooks (see "Git hooks").
 - **`verify` and `done`:** refuse on any branch except the task's own.
 - **`done`:**
   1. records the task as passing in a commit on the branch, and pushes;
@@ -91,13 +93,26 @@ With pull requests:
 - **Errors from `gh`** (not logged in, network): `done` stops without merging and prints the error. It never reads an error as "no checks".
 - **No checks:** when GitHub reports none, `done` merges. If a workflow in `.github/workflows` runs on `pull_request`, it first waits up to 60 seconds for the checks to appear.
 - **Another clone:** until the merge, the queue that shows the task lives on the task branch. In a clone that is on the base branch, `status` lists those task branches and says to switch to one.
-- **First delivery:** when origin has no base branch yet, the task is built on the base branch and `done` pushes it directly. This is the only direct push to the base branch the harness makes.
+- **First push:** when origin has no base branch yet, `start` refuses and prints the one allowed direct push, `HARNESS_BASE_PUSH=1 git push -u origin <base>`, for the harness commit. Bootstrap makes that push, or creates the GitHub repository with `gh repo create --push`. Every task, the walking skeleton included, then goes through a pull request.
 - **GitHub CLI:** `gh` must be installed and logged in. Without it, `done` pushes the branch and stops with the fix.
 
 Limits:
-- The hook protects only clones where `start` ran and no hook manager (`core.hooksPath`, for example husky) is configured. `git push --no-verify` skips it. Turn on branch protection for the base branch in the GitHub settings to enforce the rule on the server.
+- The hooks protect every clone when husky runs them, and otherwise only clones where `start` or `hook install` ran. `--no-verify` skips them. Turn on branch protection for the base branch in the GitHub settings to enforce the rule on the server.
 - Merge state is read from `docs/tasks.json` on `origin/<base>`, so that file must be committed.
 - Checks from systems outside GitHub Actions that report late can be missed by the no-checks rule; require them in branch protection.
+
+## Git hooks
+
+`start` and `reopen` install two hooks, and `hook install` does the same by hand:
+- **pre-commit** runs the checks marked `"precommit": true` and stops the commit when one fails, printing the log tail.
+- **pre-push** stops pushes to the base branch when delivery uses pull requests. `HARNESS_BASE_PUSH=1` allows the one direct push of the harness commit.
+
+Where they go:
+- **husky runs the hooks** (`core.hooksPath` is `.husky/_` or `.husky`): the runner adds `python3 scripts/harness.py hook pre-commit` to the end of `.husky/pre-commit` and `... hook pre-push` to the top of `.husky/pre-push`, keeping what is there. These files are committed, so every clone that runs `npm install` gets the hooks.
+- **no hook manager:** small scripts in this clone's `.git/hooks/`. A hook there that the harness did not write is kept, and `start` prints the line to add to it.
+- **another hook manager** in `core.hooksPath`: `start` prints the two lines to add to it.
+
+The runner's own commit of `docs/tasks.json` during `done` skips the hooks, because `verify` already ran the checks.
 
 ## Session end: `wrapup`
 

@@ -23,10 +23,10 @@ I want to build a website where neighbours can lend each other tools. Set it up 
 3. **Define.** The agent writes `docs/PROJECT.md`: users and their jobs, scope, domain terms, and ID'd rows for requirements (Given/When/Then acceptance and a check), decisions, assumptions, and open questions. When research ran, `docs/RESEARCH.md` holds cited, dated facts.
 4. **Plan.** 3–8 small tasks, starting with a walking skeleton that makes every check type pass once.
 5. **Install.** `scripts/bootstrap.py install` copies the runner to `scripts/harness.py`, adds the harness block to `AGENTS.md`, and creates `docs/tasks.json` and `docs/config.json`. Reruns never overwrite edited content.
-6. **Initialize.** For a new project, the walking skeleton (F001) goes through the task loop and the baseline is committed.
+6. **Deliver and initialize.** A new project gets a private GitHub repository and one direct push of the harness commit. The walking skeleton (F001) then goes through the task loop and a pull request, like every later task.
 7. **Report.** Findings, defaults in use, checks and their baseline, the wrapup result, and the next task.
 
-In a bootstrapped repository every session starts with `python3 scripts/harness.py status` and ends with `wrapup --note`. The loop in AGENTS.md: `start` (the task's own branch) → test first → `verify` → independent `review` when the task asks for one → commit → `done --proof`, which pushes, opens a pull request, waits for the checks and merges → next task. After the first delivery, the base branch changes only through those pull requests. The runner refuses to:
+In a bootstrapped repository every session starts with `python3 scripts/harness.py status` and ends with `wrapup --note`. The loop in AGENTS.md: `start` (the task's own branch) → test first → `verify` → independent `review` when the task asks for one → commit → `done --proof`, which pushes, opens a pull request, waits for the checks and merges → next task. After the harness commit, the base branch changes only through those pull requests. A pre-commit hook runs the fast checks before every commit (through husky in Node projects). The runner refuses to:
 - push straight to the base branch (a git hook blocks it);
 - start a second task while one is in progress or its pull request is not merged;
 - pass a task that changed a path on its must-not-change list;

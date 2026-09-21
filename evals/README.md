@@ -10,7 +10,8 @@ python3 -m unittest discover -s evals -p 'test_*.py'
 - `check_bundle.py` checks four things: required files exist, the SKILL.md frontmatter is valid, every runner command the docs mention exists, and local links resolve.
 - `test_harness.py` runs the runner and the installer as black boxes in temporary repositories:
   - runner cases: the full task loop, the one-task limit, dependencies, stale evidence, interrupted verify, a lock left by a dead process, a missing command, timeouts, invalid state files, `drop`, repeated failures, 1.x state, required reviews, must-not-change paths, `wrapup`, and `list` hiding finished tasks;
-  - delivery cases, against a bare local `origin` and a fake `gh`: merge through a pull request, failed checks, a pull request waiting for merge (with changes after `done` and a clone on the base branch), `gh` errors, a merge queue, a closed pull request, a merge that `gh` reports as failed after merging, `start` before the harness is merged, the first push to an empty remote, a blocked direct push, and `verify` outside the task branch;
+  - delivery cases, against a bare local `origin` and a fake `gh`: merge through a pull request, failed checks, a pull request waiting for merge (with changes after `done` and a clone on the base branch), `gh` errors, a merge queue, a closed pull request, a merge that `gh` reports as failed after merging, `start` before the harness is merged, an empty remote (one direct push of the harness, then pull requests), a blocked direct push and its override, and `verify` outside the task branch;
+  - hook cases: the pre-commit hook blocks a commit while a `precommit` check fails, and husky projects get the hook lines in their `.husky/` files;
   - installer cases: existing content is kept, reruns are safe, conflicts are reported, dry runs write nothing, and `inspect` output.
 
 ## 2. Agent scenarios (substantial changes)
