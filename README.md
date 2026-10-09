@@ -26,16 +26,17 @@ I want to build a website where neighbours can lend each other tools. Set it up 
 6. **Deliver and initialize.** A new project gets a private GitHub repository and one direct push of the harness commit. The walking skeleton (F001) then goes through the task loop and a pull request, like every later task.
 7. **Report.** Findings, defaults in use, checks and their baseline, the wrapup result, and the next task.
 
-In a bootstrapped repository every session starts with `python3 scripts/harness.py status` and ends with `wrapup --note`. The loop in AGENTS.md: `start` (the task's own branch) → test first → `verify` → independent `review` when the task asks for one → commit → `done --proof`, which pushes, opens a pull request, waits for the checks and merges → next task. After the harness commit, the base branch changes only through those pull requests. A pre-commit hook runs the fast checks before every commit (through husky in Node projects). The runner refuses to:
-- push straight to the base branch (a git hook blocks it);
-- start a second task while one is in progress or its pull request is not merged;
-- pass a task that changed a path on its must-not-change list;
-- finish with stale, unreviewed or uncommitted work;
-- mark a task done without proof for each acceptance criterion.
+In a bootstrapped repository, start with `python3 scripts/harness.py status`.
+The short AGENTS.md entry links to `docs/workflow.md`, which works without the installed skill.
+Tasks follow `start` → reproduce and fix → `verify --proof` → independent review when required → commit → `done`.
+Proof names passing checks. Source, config or task-constraint changes invalidate verification and review.
 
-Large or unclear new features go back through the skill's research step.
+`done` opens a PR and checks CI. Missing CI stays pending; only successful results pass.
+The owner merges unless automatic merge was explicitly authorized. Missing remote or GitHub CLI
+never silently switches to local delivery. Set local mode only when the user chooses it.
+Local checks and CI use the same `docs/config.json` registry via `python3 scripts/harness.py check`.
 
-Requirement: Python 3.8+ on the machine where agents work. CI keeps running the project's own checks.
+Requirement: Python 3.8+ where agents and CI run the harness.
 
 ## Layout
 
@@ -46,15 +47,14 @@ Requirement: Python 3.8+ on the machine where agents work. CI keeps running the 
 | `references/harness.md` | when choosing checks, rerunning, migrating, or debugging |
 | `assets/` | never in full: copied (runner, AGENTS block) or filled in (templates) |
 | `scripts/bootstrap.py` | never: it is run |
-| `evals/`, `docs/design-notes.md` | only when changing this skill |
+| `tests/`, `docs/evaluation.md`, `docs/design-notes.md` | only when changing this skill |
 
 Upgrading a project bootstrapped with 1.x: see "Migrating" in [references/harness.md](references/harness.md).
 
 ## Validate the bundle
 
 ```sh
-python3 scripts/check_bundle.py
-python3 -m unittest discover -s evals -p 'test_*.py'
+python3 assets/harness.py check
 ```
 
-Evaluation protocol and results: [evals/README.md](evals/README.md), [evals/results/REPORT.md](evals/results/REPORT.md).
+Evaluation protocol and results: [evaluation guide](docs/evaluation.md), [historical results](docs/evaluation-history.md).

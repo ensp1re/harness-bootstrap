@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "delivery": {"mode": "pr", "base": "main", "autoMerge": false},
+  "checks": [
+    {"id": "bundle", "argv": ["python3", "scripts/check_bundle.py"], "required": true},
+    {"id": "tests", "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], "required": true},
+    {"id": "mutations", "argv": ["python3", "scripts/evaluate.py"], "required": true}
+  ]
+}

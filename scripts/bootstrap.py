@@ -17,11 +17,12 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKILL_VERSION = '2.0.0'
+SKILL_VERSION = '2.1.0'
 SKILL = Path(__file__).resolve().parents[1]
 START, END = '<!-- harness:start', '<!-- harness:end -->'
 IGNORE_LINES = ('docs/runs/', 'docs/.harness.lock')
@@ -55,9 +56,14 @@ def text_or_none(path):
 
 def write_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(text, encoding='utf-8')
-    os.replace(temporary, path)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def sha(text):
@@ -204,6 +210,7 @@ def install(root, dry_run, claude):
             hashes[key] = sha(new)
             report.append(('unchanged', key))
         elif current is None and respect_removal and key in recorded:
+            hashes[key] = recorded[key]
             report.append(('left removed', key))
         elif current is None or sha(current) == recorded.get(key):
             hashes[key] = sha(new)
@@ -215,9 +222,32 @@ def install(root, dry_run, claude):
                 hashes[key] = recorded[key]
             report.append(('conflict', key))
 
+    # Preflight every destination before any write; symlinks and unreadable user files are conflicts.
+    destinations = ('scripts/harness.py', 'scripts/check-docs.py', 'AGENTS.md', 'docs/workflow.md', 'docs/tasks.json',
+                    'docs/config.json', 'docs/install.json', '.gitignore', 'CLAUDE.md')
+    for name in destinations:
+        path = root / name
+        if any(part.is_symlink() for part in (path, *path.parents) if part != root and root in part.parents):
+            print(f'conflict: {name} is a symlink or has a symlink parent')
+            return 1
+        if path.exists() and (not path.is_file() or text_or_none(path) is None):
+            print(f'conflict: {name} is not a readable UTF-8 file')
+            return 1
+    agents_text = text_or_none(root / 'AGENTS.md') or ''
+    if (START in agents_text or END in agents_text) and (
+            agents_text.count(START) != 1 or agents_text.count(END) != 1
+            or agents_text.index(START) > agents_text.index(END)):
+        print('conflict: AGENTS.md has malformed or duplicate harness markers')
+        return 1
+
     runner_path = root / 'scripts/harness.py'
     runner = (SKILL / 'assets/harness.py').read_text(encoding='utf-8')
     managed('scripts/harness.py', text_or_none(runner_path), runner, lambda: write_text(runner_path, runner))
+
+    docs_check_path = root / 'scripts/check-docs.py'
+    docs_check = (SKILL / 'assets/check_docs.py').read_text(encoding='utf-8')
+    managed('scripts/check-docs.py', text_or_none(docs_check_path), docs_check,
+            lambda: write_text(docs_check_path, docs_check), respect_removal=True)
 
     agents_path = root / 'AGENTS.md'
     agents = text_or_none(agents_path)
@@ -233,10 +263,16 @@ def install(root, dry_run, claude):
             write_text(agents_path, agents.replace(current, block))
     managed('AGENTS.md#harness', current, block, write_block, respect_removal=True)
 
+    workflow_path = root / 'docs/workflow.md'
+    workflow = (SKILL / 'assets/workflow.md').read_text(encoding='utf-8')
+    managed('docs/workflow.md', text_or_none(workflow_path), workflow,
+            lambda: write_text(workflow_path, workflow), respect_removal=True)
+
     remote_head = run(root, 'git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD') or ''
     base = remote_head.split('/', 1)[1] if '/' in remote_head else (run(root, 'git', 'branch', '--show-current') or 'main')
-    config = {'schemaVersion': 2, 'checks': [],
-              'delivery': {'mode': 'pr', 'base': base, 'merge': 'squash', 'checksWaitSeconds': 90}}
+    config = {'schemaVersion': 2, 'checks': [
+              {'id': 'docs', 'argv': ['python3', 'scripts/check-docs.py'], 'required': True, 'precommit': True}],
+              'delivery': {'mode': 'pr', 'base': base, 'merge': 'squash', 'checksWaitSeconds': 90, 'autoMerge': False}}
     for relative, default in (('docs/tasks.json', {'schemaVersion': 2, 'nextId': 1, 'tasks': []}),
                               ('docs/config.json', config)):
         if (root / relative).exists():

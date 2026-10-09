@@ -1,6 +1,6 @@
 # Design notes (maintainers)
 
-Why harness-bootstrap 2.0 works the way it does. Agents running the skill never need this file. Version 1.x rationale (Symphony, Spec Kit, OpenSpec, Beads, OpenHands) is in git history under `references/research.md`.
+Historical rationale for harness-bootstrap 2.0. The current behavior is defined in [the runner reference](../references/harness.md); delivery and evidence rules below describe past decisions. Agents running the skill never need this file. Version 1.x rationale (Symphony, Spec Kit, OpenSpec, Beads, OpenHands) is in git history under `references/research.md`.
 
 ## Problems found in 1.x
 
@@ -28,7 +28,7 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
 
 | Approach | Fixes | Why it fits | Cost | How it is checked |
 |---|---|---|---|---|
-| One tested runner (`assets/harness.py`) copied into projects | P1, P2, P10, P11, P15 | Deterministic behavior belongs in code, not in prose an agent re-implements; bundled scripts run without entering context (Agent Skills spec) | Needs Python 3.8+ where agents work; one implementation to maintain | `evals/test_harness.py` |
+| One tested runner (`assets/harness.py`) copied into projects | P1, P2, P10, P11, P15 | Deterministic behavior belongs in code, not in prose an agent re-implements; bundled scripts run without entering context (Agent Skills spec) | Needs Python 3.8+ where agents work; one implementation to maintain | `tests/test_harness.py` |
 | Local definition of done: `verify` (own + required checks) → commit → `done --proof` | P1, P6, P7 | Course lecture 07 loop; Anthropic long-running harness (2025-11-26); OpenAI harness engineering (2026-02-11). No source makes PR + CI the definition of done | `--proof` names the test but cannot prove coverage; CI stays outside the gate | full-loop test; scenario d |
 | One home per kind of state; `status` computes the resume view from tasks.json, notes and git | P3, P13 | Sources keep machine task state + one narrative + git, and compute git facts on read (OpenAI exec plans 2025-10; Anthropic 2025-11, 2026-03) | History lives only in short notes and commits | scenario d |
 | Two hashes: task definition and repository files, bookkeeping files excluded; passing tasks flagged only on definition change | P4 | Keeps evidence meaningful without re-verify churn | Any file edit between verify and done needs a new verify; large repos hash many files | stale-evidence test |
