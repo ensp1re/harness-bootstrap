@@ -24,9 +24,10 @@ class Repo:
         directory = tempfile.TemporaryDirectory(prefix='harness-test-')
         test.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        self.env = dict(os.environ, npm_config_cache=str(self.root.parent / 'harness-npm-cache'))
         (self.root / 'scripts').mkdir()
         shutil.copy(RUNNER, self.root / 'scripts/harness.py')
-        self.write('docs/config.json', {'schemaVersion': 2, 'checks': checks})
+        self.write('docs/config.json', {'schemaVersion': 2, 'checks': checks, 'delivery': {'mode': 'local'}})
         self.write('docs/tasks.json', tasks or {'schemaVersion': 2, 'nextId': 1, 'tasks': []})
         self.write('.gitignore', 'docs/runs/\ndocs/.harness.lock\n')
         if use_git:
@@ -76,19 +77,19 @@ class RunnerTest(unittest.TestCase):
         code, out = repo.run('verify', 'F001')
         self.assertEqual(code, 0, out)
         self.assertEqual([c['id'] for c in repo.tasks()['F001']['evidence']['checks']], ['feature', 'suite'])
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 1, out)
         self.assertIn('feature.txt', out)
         repo.commit('feature')
         code, out = repo.run('done', 'F001')
         self.assertEqual(code, 1, out)
         self.assertIn('--proof', out)
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 0, out)
         task = repo.tasks()['F001']
         self.assertEqual(task['state'], 'passing')
         self.assertTrue(task['evidence']['commit'])
-        self.assertEqual(task['evidence']['proof'], {'1': 'feature check'})
+        self.assertEqual(task['evidence']['proof'], {'1': 'feature: check'})
 
     def test_one_task_in_progress_and_dependencies_must_pass(self):
         repo = Repo(self, [{'id': 'ok', 'argv': OK}])
@@ -151,7 +152,7 @@ class RunnerTest(unittest.TestCase):
         out = repo.run('status')[1]
         self.assertIn('interrupted', out)
         self.assertFalse((repo.root / 'docs/.harness.lock').exists())
-        repo.write('docs/config.json', {'schemaVersion': 2, 'checks': [{'id': 'slow', 'argv': OK}]})
+        repo.write('docs/config.json', {'schemaVersion': 2, 'checks': [{'id': 'slow', 'argv': OK}], 'delivery': {'mode': 'local'}})
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
 
     def test_lock_left_by_dead_process_is_taken_over(self):
@@ -234,11 +235,11 @@ class RunnerTest(unittest.TestCase):
         code, out = repo.run('done', 'F001', '--proof', '1=ok')
         self.assertEqual(code, 1, out)
         self.assertIn('independent review', out)
-        code, out = repo.run('review', 'F001', '--fail', '--summary', 'edge case missing', '--by', 'subagent')
+        code, out = repo.run('review', 'F001', '--proof', '1=ok', '--fail', '--summary', 'edge case missing', '--by', 'subagent')
         self.assertEqual(code, 0, out)
         self.assertEqual(repo.tasks()['F001']['state'], 'active')
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
-        self.assertEqual(repo.run('review', 'F001', '--pass', '--summary', 'covers the edge case')[0], 0)
+        self.assertEqual(repo.run('review', 'F001', '--proof', '1=ok', '--pass', '--summary', 'covers the edge case')[0], 0)
         code, out = repo.run('done', 'F001', '--proof', '1=ok')
         self.assertEqual(code, 0, out)
 
@@ -317,7 +318,7 @@ if args[:2] == ['pr', 'view']:
     if pr is None:
         sys.exit('no pull requests found for branch ' + args[2])
     head = origin_git('rev-parse', '--verify', '--quiet', 'refs/heads/' + pr['head']).stdout.strip()
-    print(json.dumps({'number': pr['number'], 'url': pr['url'], 'state': pr['state'], 'headRefOid': head}))
+    print(json.dumps({'number': pr['number'], 'url': pr['url'], 'state': pr['state'], 'headRefOid': head or pr.get('mergedHead')}))
 elif args[:2] == ['pr', 'create']:
     options = dict(zip(args[2::2], args[3::2]))
     pr = {'number': len(state['prs']) + 1, 'head': options['--head'], 'base': options['--base'],
@@ -333,7 +334,7 @@ elif args[:2] == ['pr', 'checks']:
     if mode == 'error':
         sys.exit('HTTP 401: Bad credentials (https://api.github.com/graphql)')
     print(json.dumps([{'name': 'ci', 'bucket': mode, 'link': 'https://ci.test/run/1'}]))
-    sys.exit({'pass': 0, 'fail': 1, 'pending': 8}[mode])
+    sys.exit({'pass': 0, 'fail': 1, 'pending': 8}.get(mode, 0))
 elif args[:2] == ['pr', 'merge']:
     pr = find(args[2])
     head = origin_git('rev-parse', 'refs/heads/' + pr['head']).stdout.strip()
@@ -344,6 +345,7 @@ elif args[:2] == ['pr', 'merge']:
     origin_git('update-ref', 'refs/heads/' + pr['base'], head)
     origin_git('update-ref', '-d', 'refs/heads/' + pr['head'])
     pr['state'] = 'MERGED'
+    pr['mergedHead'] = head
     save()
     if os.environ.get('FAKE_GH_MERGE') == 'fail-after-merge':  # gh merged, then its local branch cleanup failed
         sys.exit('failed to delete local branch')
@@ -357,6 +359,8 @@ class RemoteRepo(Repo):
 
     def __init__(self, test, checks, empty_remote=False, delivery=None):
         super().__init__(test, checks)
+        delivery = delivery or {'mode': 'pr', 'autoMerge': True}
+        delivery.setdefault('autoMerge', True)
         if delivery:
             config = json.loads((self.root / 'docs/config.json').read_text())
             config['delivery'] = delivery
@@ -438,7 +442,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.branch(), 'feat/f001-feature-file-exists')
         self.assertIn('harness.py hook pre-push', (repo.root / '.git/hooks/pre-push').read_text())
         self.finish_work(repo)
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 0, out)
         self.assertIn('https://github.test/pull/1', out)
         self.assertEqual(repo.branch(), 'main')
@@ -454,7 +458,7 @@ class DeliveryTest(unittest.TestCase):
         repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
         repo.run('start', 'F001')
         self.finish_work(repo)
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 1, out)
         self.assertIn('checks failed: ci', out)
         self.assertEqual(repo.tasks()['F001']['state'], 'active')
@@ -468,7 +472,7 @@ class DeliveryTest(unittest.TestCase):
         repo.run('add', 'Second thing', '--accept', 'x', '--check', 'ok')
         repo.run('start', 'F001')
         self.finish_work(repo)
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 1, out)
         self.assertIn('still running', out)
         code, out = repo.run('start', 'F002')
@@ -482,7 +486,7 @@ class DeliveryTest(unittest.TestCase):
         repo.commit('late change')
         code, out = repo.run('done', 'F001')
         self.assertEqual(code, 1, out)
-        self.assertIn('changed after done (feature.txt)', out)
+        self.assertIn('fresh verification', out)
         repo.git('reset', '-q', '--hard', 'HEAD~1')
         repo.env['FAKE_GH_CHECKS'] = 'pass'
         code, out = repo.run('done', 'F001')
@@ -496,7 +500,7 @@ class DeliveryTest(unittest.TestCase):
         repo.run('start', 'F001')
         self.finish_work(repo)
         repo.env['FAKE_GH_CHECKS'] = 'error'
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 1, out)
         self.assertIn('could not read the checks: HTTP 401', out)
         repo.env.update(FAKE_GH_CHECKS='pass', FAKE_GH_MERGE='queue')
@@ -512,7 +516,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.run('reopen', 'F001', '--reason', 'the user wants it after all')[0], 0)
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
         repo.env['FAKE_GH_MERGE'] = 'fail-after-merge'
-        code, out = repo.run('done', 'F001', '--proof', '1=feature check')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 0, out)
         self.assertIn('merged into main: https://github.test/pull/2', out)
         self.assertEqual(repo.origin_file('feature.txt'), 'done\n')

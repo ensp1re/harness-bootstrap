@@ -46,9 +46,9 @@ If there is no answer, or you run unattended: a non-blocking question uses its d
 
 ## 6. Reopen
 
-Reopen discovery when an A- row fails, the user changes a decision, implementation contradicts a V- row, or a legal or price fact is older than 6 months at release. Mark the row (`invalid`, or a new D- row that replaces the old one), find what depends on it with `grep -n` on PROJECT.md and the runner's `list`, and update the affected R- rows and tasks as the harness block in AGENTS.md describes. Research only the changed topic, with one round of the original tier's budget.
+Reopen discovery when an A- row fails, the user changes a decision, implementation contradicts a V- row, or a legal or price fact is older than 6 months at release. Mark the row (`invalid`, or a new D- row that replaces the old one), find what depends on it with `grep -n` on PROJECT.md and the runner's `list`, and update the affected R- rows and tasks as docs/workflow.md describes. Research only the changed topic, with one round of the original tier's budget.
 
 ## 7. New features and questions during a task
 
 - **A large or unclear new feature on a bootstrapped repository** (Feature mode): run sections 1–5 for that feature only. Choose the tier from the feature's own uncertainty and stakes, not the whole product's. Add its R- rows next to the existing ones and queue its tasks.
-- **A question that comes up in the middle of a task:** the AGENTS.md task loop allows one short round (at most 5 searches) without leaving the task. A bigger question, or one only the user can answer, blocks the task and goes to Feature mode or to the user.
+- **A question that comes up in the middle of a task:** the installed workflow allows one short round (at most 5 searches) without leaving the task. A bigger question, or one only the user can answer, blocks the task and goes to Feature mode or to the user.

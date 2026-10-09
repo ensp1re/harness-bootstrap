@@ -1,12 +1,12 @@
 ---
 name: harness-bootstrap
-description: Turn a project idea, a written spec, or an existing repository into a working harness for coding agents - domain research scaled to the uncertainty, a project definition with testable requirements, a small task queue with real checks, an initialized walking skeleton, and a bundled runner that tracks tasks, verification evidence, reviews, session handoff, and delivery through pull requests that merge after checks pass. Use when someone wants to start a project with coding agents ("I have an idea for a website", "set up this repo so agents can build it", "bootstrap the harness"), define a large or unclear new feature for a repository that already has the harness, rerun or upgrade an existing harness, or migrate a harness-bootstrap 1.x project. Not for implementing tasks that are already queued; the repository's AGENTS.md covers that.
+description: Turn a project idea, a written spec, or an existing repository into a working harness for coding agents - domain research scaled to the uncertainty, a project definition with testable requirements, a small task queue with real checks, an initialized walking skeleton, and a bundled runner that tracks tasks, verification evidence, reviews, session handoff, and delivery through pull requests with verified checks and explicit merge authorization. Use when someone wants to start a project with coding agents ("I have an idea for a website", "set up this repo so agents can build it", "bootstrap the harness"), define a large or unclear new feature for a repository that already has the harness, rerun or upgrade an existing harness, or migrate a harness-bootstrap 1.x project. Not for implementing tasks that are already queued; the repository's AGENTS.md covers that.
 ---
 # Harness Bootstrap
 
-The result: a fresh agent session in the repository runs one command, learns what to do next, finishes one task end to end with proof, delivers it through a pull request that merges after the checks pass, and leaves state the next session can trust. Bootstrap ends with the project defined, the harness installed and delivered, a new project initialized, and the next tasks queued. Build product features only if the user asked for that as well.
+The result: a fresh agent session in the repository runs one command, learns what to do next, finishes one task end to end with proof, delivers it through a pull request, with merge authorization kept separate, and leaves state the next session can trust. Bootstrap ends with the project defined, the harness installed and delivered, a new project initialized, and the next tasks queued. Build product features only if the user asked for that as well.
 
-A bootstrapped repository gets: `AGENTS.md` (project notes plus the harness block), `docs/PROJECT.md`, `docs/RESEARCH.md` when research ran, `docs/tasks.json` and `docs/config.json`, and the runner `scripts/harness.py`. Details: [references/harness.md](references/harness.md).
+A bootstrapped repository gets: `AGENTS.md` (project notes plus the harness block), `docs/PROJECT.md`, `docs/RESEARCH.md` when research ran, `docs/tasks.json`, `docs/config.json` and `docs/workflow.md`, and the runner `scripts/harness.py`. Details: [references/harness.md](references/harness.md).
 
 `<skill>` below means the directory that contains this file.
 
@@ -29,7 +29,7 @@ In Idea and Feature modes, and for Existing code when the requested work is not 
 
 ## 3. Define
 
-Write `docs/PROJECT.md` from [the template](assets/templates/PROJECT.md.tmpl), and `docs/RESEARCH.md` from [its template](assets/templates/RESEARCH.md.tmpl) when research ran. Delete empty sections. PROJECT.md holds decisions, not history, copied research text, or a restatement of the request: add a D- row only for a choice someone could reasonably make differently.
+Write `docs/PROJECT.md` from [the template](assets/templates/PROJECT.md.tmpl), and `docs/RESEARCH.md` from [its template](assets/templates/RESEARCH.md.tmpl) when research ran. Delete empty sections. PROJECT.md is the canonical decision register. Keep IDs unique; other docs link to its decisions. Distinguish implemented behavior from planned requirements. Delete the RESEARCH link when no research file exists. Do not copy research text or restate the request: add a D- row only for a choice someone could reasonably make differently.
 
 Each requirement is one observable behavior with Given/When/Then acceptance, concrete values, and the check that will prove it. Those acceptance lines become the task's definition of done. Write `docs/ARCHITECTURE.md` only for two or more deployable parts, or boundaries the code will not show.
 
@@ -46,16 +46,16 @@ Each requirement is one observable behavior with Given/When/Then acceptance, con
 ## 5. Install and configure
 
 1. Run `python3 <skill>/scripts/bootstrap.py install <repo>`. Add `--claude` when the user works in Claude Code. On a repository that already has a harness or legacy files, run with `--dry-run` first. Report conflicts; never overwrite them.
-2. Put the checks in `docs/config.json` (see "Checks" in references/harness.md). Take commands from package scripts, Makefile, and CI. Required checks are the fast regression suite. Also give each task its own check that runs only the tests for its acceptance (for example `node --test test/tags.test.js`); the task itself creates that test. Web interfaces get browser tests, unless project rules forbid the tooling: then use HTTP-level tests and record the gap as an A- row. Mark a startup smoke check `"wrapup": true` so every session end proves the app still starts. Mark the fast checks that only read files (format check, lint, typecheck) `"precommit": true`; the pre-commit hook runs them before every commit. Add the same required checks to CI when the repository has CI, so pull requests are checked on the server too.
-3. Delivery: `install` writes `"delivery": {"mode": "pr", ...}`. With an `origin` remote, every finished task ships through a pull request that `done` merges after its checks pass, and pushes to the base branch are blocked (see "Delivery" in references/harness.md). Check `gh auth status --active`; a missing or logged-out `gh` is a delivery blocker to report. Recommend branch protection for the base branch in the GitHub settings; changing it is the user's decision. Use `"mode": "local"` only when the user wants no pull requests.
+2. Put the checks in `docs/config.json` (see "Checks" in references/harness.md). Take commands from package scripts, Makefile, and CI. Required checks are the fast regression suite. Also give each task its own check that runs only the tests for its acceptance (for example `node --test test/tags.test.js`); the task itself creates that test. Web interfaces get browser tests, unless project rules forbid the tooling: then use HTTP-level tests and record the gap as an A- row. Use dynamic ports for parallel browser fixtures. Mark a startup smoke check `"wrapup": true` so every session end proves the app still starts. Mark the fast checks that only read files (format check, lint, typecheck) `"precommit": true`; the pre-commit hook runs them before every commit. CI installs the same dependencies and runs `python3 scripts/harness.py check`; local verification reads that same registry. Cache dependencies only, not integration-test outcomes. Use `cwd` and an explicit package script; missing scripts must fail.
+3. Delivery: `install` writes `"delivery": {"mode": "pr", ...}`. Every finished task ships through a pull request; `done` waits for the owner to merge unless `delivery.autoMerge: true` was explicitly authorized, and pushes to the base branch are blocked (see "Delivery" in references/harness.md). Check `gh auth status --active`; a missing or logged-out `gh` is a delivery blocker to report. Recommend branch protection for the base branch in the GitHub settings; changing it is the user's decision. Use `"mode": "local"` only when the user wants no pull requests.
 4. Above the harness block in `AGENTS.md`, write the project part in at most 40 lines: purpose in one line, setup, dev, and run commands, and project rules the code does not show. Leave existing instructions as they are. Link to PROJECT.md instead of copying it. No generic advice.
 5. Queue the tasks: `python3 scripts/harness.py add "<behavior>" --type feat --accept "..." --check <id> --after F00n --ref R-n`, adding `--keep` and `--review` where step 4 says. Never write `docs/tasks.json` by hand.
 
 ## 6. Deliver the harness and initialize
 
-Bootstrap creates the GitHub repository when there is none, then commits, pushes and merges; that is part of bootstrapping. Use `"mode": "local"` only when the user says not to use GitHub, or when `gh` is missing or logged out (report that as a blocker).
+Commit and publish only within the user’s authorization. Creating a repository and merging are separate actions; a request to open a PR does not authorize merge. Keep `autoMerge: false` unless the user authorizes automatic merge. Missing `origin`, `gh`, login or CI is a blocker, never permission to switch to local delivery. Use `"mode": "local"` only when the user chooses local delivery.
 
-- **New project, or no GitHub remote yet:**
+- **New project, or no GitHub remote yet, with repository creation and push authorized:**
   ```sh
   git init -b main                                      # only when there is no repository yet
   git add AGENTS.md docs scripts/harness.py .gitignore   # plus CLAUDE.md when created
@@ -71,14 +71,13 @@ Bootstrap creates the GitHub repository when there is none, then commits, pushes
   git push -u origin chore/agent-harness
   gh pr create --base <base> --title "chore: add agent harness" --body "<what bootstrap set up>"
   gh pr checks --watch
-  gh pr merge --squash --delete-branch
-  git switch <base> && git pull --ff-only origin <base>
+  # Wait for the owner to merge, or merge only when explicitly authorized.
   ```
-  Then run the required checks' commands once and record whether the baseline passes. Queue fixes instead of making them now.
+  Run `python3 scripts/harness.py check` and record the baseline. Queue fixes for unrelated failures. Confirm GitHub reports MERGED before continuing work that depends on the harness reaching the base branch.
 
-A new project's F001 then runs through the task loop in the AGENTS.md harness block like every later task: `start F001` creates its branch, and `done F001 --proof ...` opens its pull request, waits for the checks and merges it.
+A new project's F001 then runs through the installed `docs/workflow.md` task loop like every later task: `start F001` creates its branch, and `done F001 --proof ...` opens its pull request and waits for checks and an authorized merge.
 
-If tools cannot be installed (no network, missing runtime), do not start F001: leave it ready and report why. Prove a new check by running its command directly. Never end bootstrap with a task active or verified: finish it with `done`, or `block` it with the reason.
+If tools cannot be installed (no network, missing runtime), do not start F001: leave it ready and report why. Prove a new check by running its command directly. If blocked, preserve the actual task state and report the blocker. Do not reset evidence or weaken authorization just to finish bootstrap.
 
 ## 7. Validate and report
 
@@ -93,7 +92,7 @@ Report briefly:
 - the queue and its next task;
 - anything unverified or blocked.
 
-Stop here unless the user also asked you to build. If they did, follow the task loop in the AGENTS.md harness block.
+Stop here unless the user also asked you to build. If they did, follow the installed `docs/workflow.md` task loop.
 
 ## Rules that prevent known failures
 
@@ -103,4 +102,4 @@ Stop here unless the user also asked you to build. If they did, follow the task 
 - After the harness commit, the base branch changes only through merged pull requests.
 - Research subagents only for tier 3, on separate topics. One agent writes the docs and runs the harness.
 
-Changing this skill: see [evals/README.md](evals/README.md).
+Changing this skill: see [docs/evaluation.md](docs/evaluation.md).
