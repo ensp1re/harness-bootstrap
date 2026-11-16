@@ -82,6 +82,45 @@ Five reviews ran on 2026-09-14: external sources, domain research, token cost, w
   - The push guard moved from a generated shell script into `harness.py hook pre-push`, so one line works in `.git/hooks` and in husky files.
   - Cost: a Python start plus the fast checks on every commit.
 
+## Task-loop changes (2026-11-16)
+
+The evidence came from one project that ran 460 tasks on an earlier runner, and from old-versus-new runs ([evaluation](evaluation.md)).
+
+| Problem seen | Change | Cost | How it is checked |
+|---|---|---|---|
+| Review was a flag set while planning, by topic. More than half of the tasks got one, small ones included | `review.paths` in the config: the runner requires a review when a task changes a listed file. `--review` stays for a user request | the paths must be kept current | review-path test |
+| Any file edit cancelled a passed review, so every fix started a new full review | A review covers the changed files on review paths and stays valid until one of them changes. The runner sends the agent back to the same reviewer, and to the user after three failed reviews | an edit outside those files is not reviewed again | review-scope test |
+| Every required check ran in each `verify`, at `wrapup` and in CI, also for a docs-only change | A check may declare `paths`: it is skipped when no changed file matches and not run again while those files are unchanged. `wrapup` runs only `wrapup` checks | `paths` must list every input; integration checks leave it off | paths test, `scripts/measure.py` |
+| A typo needed acceptance lines, its own check and proof | Acceptance lines and an own check are optional. `verify` refuses when no check covers the change | a behavior task can be queued without acceptance lines | small-task test |
+| `verify` told the agent to run `done` while a review was still missing | The next-step line names the review and the reason | none | review-path test |
+| A stopped `wrapup` or `check` left its check running | The SIGTERM handler covers every command | none | SIGTERM test |
+| Agents asked for permission to commit in every task | `delivery.autoPublish` records the standing answer; `status` prints it | information only, nothing is enforced | status test |
+| Agents opened PROJECT.md to read one row | `show` prints the referenced rows | none | show test |
+| Tests and comments piled up | The workflow says: no tests or comments by default, with named exceptions | a text rule, not enforced | agent runs |
+| Agents wrote proof before the checks had run, and added a test only to have a check to name | `verify` hints to give proof afterwards; `verify --proof` on a verified task records it without a rerun; outside review paths a line may carry `manual:` proof | manual proof is the agent's word, said plainly | proof test, agent runs |
+| No timing data from real use | One line per command in `docs/runs/events.jsonl` | a small ignored file | small-task test |
+
+Left as it was: the runner does not check that a named check exercises the acceptance line; the unused `spec` and `plan` fields stay, because removing them would change stored hashes.
+
+## Scale changes (2026-11-16)
+
+Measured first: the runner itself is fast on a large repository (30,000 files add about 4 seconds to `verify`; 2,000 finished tasks leave `status` under 0.3 seconds). The limits were elsewhere.
+
+| Problem seen | Change | Cost | How it is checked |
+|---|---|---|---|
+| Every task rewrote one `docs/tasks.json`, so two branches always conflicted in it | One file per task in `docs/tasks/`. The old file is read once and replaced at the first write | the upgrade must merge through one pull request before a second task starts | migration tests |
+| One unmerged pull request blocked every other task | A task waits only for the tasks it depends on. Several worktrees or clones work at once | two tasks that edit the same code still conflict in git | parallel-worktree tests |
+| Two branches gave the same id to different tasks | New ids skip the ids on the base branch, in the archive and in branch names. A clash found later renumbers the task that is not merged yet. A random `uid` on each task tells two tasks with one id apart | an id can change before delivery; the runner prints the new one | two-clone test |
+| A queued task was an untracked file: `git add -A` swept it into another branch, and a reset deleted it | Tasks that were never started wait in the shared git folder, outside the working tree, once the harness is on the base branch. Delivery commits only the delivered task's record and edits to records git already tracks | such a task reaches other clones only when someone starts it | queue tests |
+| A second command during a long one was refused, and a finished `verify` lost its result | One lock for all worktrees; commands wait for it up to 30 seconds | a command can wait | lock test |
+| Dependencies were known only from local files | A dependency also counts when its record on origin's base branch is passing; a task on another branch is known, not reported as missing | one fetch at `start` | dependency test |
+
+An independent review of these changes reproduced 18 defects. 16 are fixed. Two are left: a started task's record is an untracked file until the task's first commit, so `git clean` removes it (the same on the earlier runner); and a local benchmark script that is not part of the bundle still reads the old single file.
+
+The same reviewer then checked the fixes. Three were incomplete, and the fixes had brought in 13 new defects, the worst being a refused `start` that deleted a queued task it had just renumbered. 11 of the 13 are fixed. Two are left as they are: with local delivery a task that is blocked and resumed counts the commits made in between as its own, which makes checks and review cover more, never less; and a value of `HARNESS_LOCK_SECONDS` that is not a number ends in a Python error, like the other timing settings. A third pass confirmed these fixes except one: the record of a blocked task still reached the base branch when the agent had committed it with `git add -A`. That is fixed, and a renumbered task now prints its new number even when the command is refused afterwards. Two small findings of that pass are left: two tasks made in two clones by a runner from before tasks carried a `uid` count as one task under the same number; and during an upgrade `status` still offers `start` while the upgraded runner sits on an unmerged branch, where `start` refuses and says to merge the upgrade first. Every fix from the three rounds has a test in `tests/test_generated.py` (`ReviewFindings`), and each of those tests fails when its fix is taken out.
+
+Not done: stacked tasks (starting a task on top of an unmerged one), and sharing never-started tasks between clones before one of them is started.
+
 ## Decisions to revisit
 
 1. `docs/harness-sequence.png` still shows the 1.x flow.

@@ -22,14 +22,14 @@ I want to build a website where neighbours can lend each other tools. Set it up 
 2. **Discover.** Research depth follows uncertainty and stakes: tiers 0–3, each with a search budget and stop rules. The agent asks at most 3 questions, each with a default.
 3. **Define.** The agent writes `docs/PROJECT.md`: users and their jobs, scope, domain terms, and ID'd rows for requirements (Given/When/Then acceptance and a check), decisions, assumptions, and open questions. When research ran, `docs/RESEARCH.md` holds cited, dated facts.
 4. **Plan.** 3–8 small tasks, starting with a walking skeleton that makes every check type pass once.
-5. **Install.** `scripts/bootstrap.py install` copies the runner to `scripts/harness.py`, adds the harness block to `AGENTS.md`, and creates `docs/tasks.json` and `docs/config.json`. Reruns never overwrite edited content.
+5. **Install.** `scripts/bootstrap.py install` copies the runner to `scripts/harness.py`, adds the harness block to `AGENTS.md`, and creates `docs/config.json`. Each task becomes its own file under `docs/tasks/`. Reruns never overwrite edited content.
 6. **Deliver and initialize.** A new project gets a private GitHub repository and one direct push of the harness commit. The walking skeleton (F001) then goes through the task loop and a pull request, like every later task.
 7. **Report.** Findings, defaults in use, checks and their baseline, the wrapup result, and the next task.
 
 In a bootstrapped repository, start with `python3 scripts/harness.py status`.
 The short AGENTS.md entry links to `docs/workflow.md`, which works without the installed skill.
-Tasks follow `start` → reproduce and fix → `verify --proof` → independent review when required → commit → `done`.
-Proof names passing checks. Source, config or task-constraint changes invalidate verification and review.
+Tasks follow `start` → reproduce and fix → `verify` → independent review when the change touches a review path → commit → `done`.
+Proof names passing checks. A later edit needs `verify` again; a review stays valid until a file it covered changes.
 
 `done` opens a PR and checks CI. Missing CI stays pending; only successful results pass.
 The owner merges unless automatic merge was explicitly authorized. Missing remote or GitHub CLI

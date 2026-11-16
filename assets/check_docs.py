@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote
 
+MAX_BYTES = 40_000  # about 10,000 tokens: an agent that opens a larger file pays for much it does not need
+
 
 def check(root):
     errors, decisions = [], {}
@@ -13,6 +15,9 @@ def check(root):
         if not path.is_file() or 'runs' in path.relative_to(root).parts:
             continue
         text = path.read_text(encoding='utf-8')
+        if len(text.encode('utf-8')) > MAX_BYTES:
+            errors.append(f'{path.relative_to(root)}: {len(text.encode("utf-8"))} bytes, over {MAX_BYTES}: '
+                          'move one area into its own file and link it')
         fenced = False
         for number, line in enumerate(text.splitlines(), 1):
             if line.lstrip().startswith(('```', '~~~')):
