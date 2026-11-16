@@ -4,8 +4,7 @@
   python3 scripts/bootstrap.py inspect ROOT
   python3 scripts/bootstrap.py install ROOT [--dry-run] [--claude]
 
-install copies assets/harness.py to scripts/harness.py, creates docs/tasks.json and docs/config.json
-when missing, adds the harness block to AGENTS.md and ignores run logs in .gitignore. It records hashes
+install copies assets/harness.py to scripts/harness.py, creates docs/config.json when missing, adds the harness block to AGENTS.md and ignores run logs in .gitignore. It records hashes
 of what it wrote in docs/install.json, so a rerun updates only content nobody changed since and reports
 everything else instead of overwriting it.
 """
@@ -22,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKILL_VERSION = '2.1.0'
+SKILL_VERSION = '2.2.0'
 SKILL = Path(__file__).resolve().parents[1]
 START, END = '<!-- harness:start', '<!-- harness:end -->'
 IGNORE_LINES = ('docs/runs/', 'docs/.harness.lock')
@@ -175,15 +174,15 @@ def inspect(root):
     if tests:
         print('test folders: ' + ', '.join(tests[:10]))
 
-    tasks = text_or_none(root / 'docs/tasks.json')
-    if tasks is not None:
+    legacy, files = text_or_none(root / 'docs/tasks.json'), sorted((root / 'docs/tasks').glob('*.json'))
+    if legacy is not None or files:
         try:
-            data = json.loads(tasks)
-            states = Counter(task.get('state') for task in data.get('tasks', []))
-            print(f'harness: docs/tasks.json schemaVersion {data.get("schemaVersion")}; '
+            tasks = json.loads(legacy).get('tasks', []) if legacy is not None else [json.loads(path.read_text()) for path in files]
+            states = Counter(task.get('state') for task in tasks)
+            print(f'harness: {"docs/tasks.json (earlier format)" if legacy is not None else "docs/tasks/"}; '
                   + (', '.join(f'{count} {state}' for state, count in states.items()) or 'no tasks'))
-        except (ValueError, AttributeError):
-            print('harness: docs/tasks.json is not valid JSON')
+        except (ValueError, AttributeError, OSError):
+            print('harness: the task files are not valid JSON')
     installed = read_install(root).get('skillVersion')
     if installed:
         print(f'harness: installed by harness-bootstrap {installed} (this skill is {SKILL_VERSION})')
@@ -223,7 +222,7 @@ def install(root, dry_run, claude):
             report.append(('conflict', key))
 
     # Preflight every destination before any write; symlinks and unreadable user files are conflicts.
-    destinations = ('scripts/harness.py', 'scripts/check-docs.py', 'AGENTS.md', 'docs/workflow.md', 'docs/tasks.json',
+    destinations = ('scripts/harness.py', 'scripts/check-docs.py', 'AGENTS.md', 'docs/workflow.md',
                     'docs/config.json', 'docs/install.json', '.gitignore', 'CLAUDE.md')
     for name in destinations:
         path = root / name
@@ -272,15 +271,15 @@ def install(root, dry_run, claude):
     base = remote_head.split('/', 1)[1] if '/' in remote_head else (run(root, 'git', 'branch', '--show-current') or 'main')
     config = {'schemaVersion': 2, 'checks': [
               {'id': 'docs', 'argv': ['python3', 'scripts/check-docs.py'], 'required': True, 'precommit': True}],
-              'delivery': {'mode': 'pr', 'base': base, 'merge': 'squash', 'checksWaitSeconds': 90, 'autoMerge': False}}
-    for relative, default in (('docs/tasks.json', {'schemaVersion': 2, 'nextId': 1, 'tasks': []}),
-                              ('docs/config.json', config)):
-        if (root / relative).exists():
-            report.append(('kept', relative))
-        else:
-            report.append(('created', relative))
-            if not dry_run:
-                write_text(root / relative, json.dumps(default, indent=2) + '\n')
+              'review': {'paths': []}, 'taskLines': 400,
+              'delivery': {'mode': 'pr', 'base': base, 'merge': 'squash', 'checksWaitSeconds': 90,
+                           'autoMerge': False, 'autoPublish': False}}
+    if (root / 'docs/config.json').exists():
+        report.append(('kept', 'docs/config.json'))
+    else:
+        report.append(('created', 'docs/config.json'))
+        if not dry_run:
+            write_text(root / 'docs/config.json', json.dumps(config, indent=2) + '\n')
 
     ignore_path = root / '.gitignore'
     ignore = text_or_none(ignore_path) or ''

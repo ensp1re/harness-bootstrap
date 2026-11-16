@@ -28,7 +28,8 @@ class Repo:
         (self.root / 'scripts').mkdir()
         shutil.copy(RUNNER, self.root / 'scripts/harness.py')
         self.write('docs/config.json', {'schemaVersion': 2, 'checks': checks, 'delivery': {'mode': 'local'}})
-        self.write('docs/tasks.json', tasks or {'schemaVersion': 2, 'nextId': 1, 'tasks': []})
+        if tasks:  # the single queue file of earlier versions
+            self.write('docs/tasks.json', tasks)
         self.write('.gitignore', 'docs/runs/\ndocs/.harness.lock\n')
         if use_git:
             self.git('init', '-q', '-b', 'main')
@@ -56,8 +57,22 @@ class Repo:
         return subprocess.run(['git', 'branch', '--show-current'], cwd=self.root, capture_output=True,
                               text=True).stdout.strip()
 
+    def task_files(self):
+        shared = subprocess.run(['git', 'rev-parse', '--git-common-dir'], cwd=self.root, capture_output=True, text=True).stdout.strip()
+        folders = [self.root / 'docs/tasks'] + ([self.root / shared / 'harness-queue'] if shared else [])
+        return [path for folder in folders for path in sorted(folder.glob('*.json'))]
+
     def tasks(self):
-        return {task['id']: task for task in json.loads((self.root / 'docs/tasks.json').read_text())['tasks']}
+        legacy = self.root / 'docs/tasks.json'
+        found = json.loads(legacy.read_text())['tasks'] if legacy.exists() else \
+            [json.loads(path.read_text()) for path in self.task_files()]
+        return {task['id']: task for task in found}
+
+    def edit_task(self, task_id, change):
+        path = next(path for path in self.task_files() if path.stem == task_id)
+        task = json.loads(path.read_text())
+        change(task)
+        path.write_text(json.dumps(task))
 
 
 class RunnerTest(unittest.TestCase):
@@ -151,7 +166,7 @@ class RunnerTest(unittest.TestCase):
         process.wait()
         out = repo.run('status')[1]
         self.assertIn('interrupted', out)
-        self.assertFalse((repo.root / 'docs/.harness.lock').exists())
+        self.assertEqual(repo.run('note', 'F001', 'the lock died with the process')[0], 0)
         repo.write('docs/config.json', {'schemaVersion': 2, 'checks': [{'id': 'slow', 'argv': OK}], 'delivery': {'mode': 'local'}})
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
 
@@ -193,9 +208,10 @@ class RunnerTest(unittest.TestCase):
     def test_drop_incomplete_tasks_and_repeated_failures(self):
         repo = Repo(self, [{'id': 'fail', 'argv': [PY, '-c', 'raise SystemExit(3)']}], use_git=False)
         repo.run('add', 'vague idea')
-        code, out = repo.run('start', 'F001')
+        self.assertEqual(repo.run('start', 'F001')[0], 0)
+        code, out = repo.run('verify', 'F001')
         self.assertEqual(code, 1)
-        self.assertIn('needs acceptance', out)
+        self.assertIn('no check covers this change', out)
         repo.run('add', 'depends on the idea', '--accept', 'x', '--check', 'fail', '--after', 'F001')
         code, out = repo.run('drop', 'F001', '--reason', 'split into smaller tasks')
         self.assertEqual(code, 0, out)
@@ -222,7 +238,8 @@ class RunnerTest(unittest.TestCase):
         self.assertIn('legacy docs/handoff.json', out)
         self.assertIn('`verify F002` again', out)
         self.assertEqual(repo.run('verify', 'F002')[0], 0)
-        self.assertEqual(json.loads((repo.root / 'docs/tasks.json').read_text())['schemaVersion'], 2)
+        self.assertFalse((repo.root / 'docs/tasks.json').exists(), 'the first write moves tasks to one file each')
+        self.assertEqual({key: task['state'] for key, task in repo.tasks().items()}, {'F001': 'passing', 'F002': 'verified'})
 
     def test_review_is_required_before_done_and_must_match_current_files(self):
         repo = Repo(self, [{'id': 'ok', 'argv': OK}])
@@ -288,6 +305,213 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn('F002', out)
         self.assertIn('1 dropped hidden', out)
         self.assertIn('F002', repo.run('list', '--all')[1])
+
+    def test_small_task_needs_no_acceptance_proof_or_own_check(self):
+        repo = Repo(self, [{'id': 'suite', 'argv': OK, 'required': True}])
+        self.assertEqual(repo.run('add', 'Fix a typo in the README', '--type', 'docs')[0], 0)
+        self.assertEqual(repo.run('start', 'F001')[0], 0)
+        repo.write('README.md', 'fixed\n')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('next: commit, then `done F001`', out)
+        self.assertEqual(list((repo.root / 'docs/runs').glob('*.log')), [], 'a passed check keeps no log')
+        repo.commit('typo')
+        self.assertEqual(repo.run('done', 'F001')[0], 0)
+        events = [json.loads(line) for line in (repo.root / 'docs/runs/events.jsonl').read_text().splitlines()]
+        self.assertEqual([event['command'] for event in events], ['add', 'start', 'verify', 'hook', 'done'])
+
+    def test_checks_with_paths_run_only_for_matching_changes_and_are_not_rerun(self):
+        count = [PY, '-c', "open('docs/runs/count.txt', 'a').write('x')"]
+        repo = Repo(self, [{'id': 'unit', 'argv': count, 'required': True, 'paths': ['src/*']},
+                           {'id': 'docs', 'argv': OK, 'required': True}, {'id': 'smoke', 'argv': OK, 'wrapup': True}])
+        runs = lambda: len((repo.root / 'docs/runs/count.txt').read_text()) if (repo.root / 'docs/runs/count.txt').exists() else 0
+        repo.run('add', 'Reword the README', '--type', 'docs')
+        repo.run('start', 'F001')
+        repo.write('README.md', 'reworded\n')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('not run, no changed file matches their paths: unit', out)
+        self.assertEqual(runs(), 0)
+        repo.commit('docs')
+        self.assertEqual(repo.run('done', 'F001')[0], 0)
+        repo.commit('queue')
+        repo.run('add', 'Change the code')
+        repo.run('start', 'F002')
+        repo.write('src/app.py', 'v1\n')
+        self.assertEqual(repo.run('verify', 'F002')[0], 0)
+        self.assertEqual(runs(), 1)
+        repo.write('README.md', 'reworded again\n')
+        code, out = repo.run('verify', 'F002')
+        self.assertEqual(code, 0, out)
+        self.assertIn('unit: passed exit 0 (reused', out)
+        self.assertEqual(runs(), 1, 'a docs edit must not rerun a check whose files did not change')
+        repo.write('src/app.py', 'v2\n')
+        self.assertEqual(repo.run('verify', 'F002')[0], 0)
+        self.assertEqual(runs(), 2)
+        self.assertEqual(repo.run('wrapup', '--note', 'verified; next: commit')[0], 0)
+        self.assertEqual(runs(), 2, 'wrapup runs only the checks marked wrapup')
+
+    def test_review_is_required_by_changed_review_paths_not_by_the_task(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK, 'required': True}])
+        config = json.loads((repo.root / 'docs/config.json').read_text())
+        config['review'] = {'paths': ['src/billing/*']}
+        repo.write('docs/config.json', config)
+        repo.commit('review paths')
+        repo.run('add', 'Change a label')
+        repo.run('start', 'F001')
+        repo.write('src/ui/label.py', 'v1\n')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('next: commit, then `done F001`', out)
+        repo.commit('label')
+        self.assertEqual(repo.run('done', 'F001')[0], 0)
+        repo.commit('queue')
+        repo.run('add', 'Round totals to cents')
+        repo.run('start', 'F002')
+        repo.write('src/billing/total.py', 'v1\n')
+        code, out = repo.run('verify', 'F002')
+        self.assertEqual(code, 0, out)
+        self.assertIn('next: get an independent review (src/billing/total.py is on a review path)', out)
+        repo.commit('totals')
+        code, out = repo.run('done', 'F002')
+        self.assertEqual(code, 1, out)
+        self.assertIn('independent review', out)
+        self.assertEqual(repo.run('review', 'F002', '--pass', '--summary', 'rounding is right')[0], 0)
+        self.assertEqual(repo.run('done', 'F002')[0], 0)
+
+    def test_review_stays_valid_until_a_reviewed_file_changes(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK, 'required': True}])
+        config = json.loads((repo.root / 'docs/config.json').read_text())
+        config['review'] = {'paths': ['src/billing/*']}
+        repo.write('docs/config.json', config)
+        repo.commit('review paths')
+        repo.run('add', 'Round totals to cents')
+        repo.run('start', 'F001')
+        repo.write('src/billing/total.py', 'v1\n')
+        repo.write('src/ui/label.py', 'v1\n')
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+        self.assertEqual(repo.run('review', 'F001', '--pass', '--summary', 'rounding is right')[0], 0)
+        repo.write('README.md', 'a typo fixed after the review\n')
+        repo.write('src/ui/label.py', 'v2\n')
+        repo.commit('work')
+        code, out = repo.run('done', 'F001')
+        self.assertEqual(code, 1, out)
+        self.assertIn('files changed', out)
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('next: commit, then `done F001`', out)
+        repo.write('src/billing/total.py', 'v2\n')
+        repo.commit('billing changed after the review')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('independent review', out)
+        self.assertIn('stale', repo.run('status')[1])
+        self.assertEqual(repo.run('done', 'F001')[0], 1)
+
+    def test_proof_is_given_after_the_checks_pass_and_may_be_manual_outside_review_paths(self):
+        count = [PY, '-c', "open('docs/runs/count.txt', 'a').write('x')"]
+        repo = Repo(self, [{'id': 'unit', 'argv': count, 'required': True}])
+        config = json.loads((repo.root / 'docs/config.json').read_text())
+        config['review'] = {'paths': ['src/billing/*']}
+        repo.write('docs/config.json', config)
+        repo.commit('review paths')
+        repo.run('add', 'Add a helper', '--accept', 'short text is unchanged')
+        repo.run('start', 'F001')
+        repo.write('src/helper.py', 'v1\n')
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('next: commit, then `done F001 --proof "1=CHECK: what it showed"`', out)
+        code, out = repo.run('verify', 'F001', '--proof', "1=manual: ran helper('abc') and it printed abc")
+        self.assertEqual(code, 0, out)
+        self.assertIn('proof recorded', out)
+        self.assertEqual(len((repo.root / 'docs/runs/count.txt').read_text()), 1, 'recording proof must not rerun checks')
+        repo.commit('helper')
+        self.assertEqual(repo.run('done', 'F001')[0], 0)
+        repo.commit('queue')
+        repo.run('add', 'Round totals', '--accept', 'half a cent rounds up')
+        repo.run('start', 'F002')
+        repo.write('src/billing/total.py', 'v1\n')
+        self.assertEqual(repo.run('verify', 'F002')[0], 0)
+        code, out = repo.run('verify', 'F002', '--proof', '1=manual: looked right')
+        self.assertEqual(code, 2, out)
+        self.assertIn('proof must name an executed passing check', out)
+        self.assertEqual(repo.run('verify', 'F002', '--proof', '1=unit: test_half_cent_rounds_up')[0], 0)
+
+    def test_check_since_skips_checks_whose_paths_did_not_change_and_verify_flags_a_large_task(self):
+        count = [PY, '-c', "open('docs/runs/count.txt', 'a').write('x')"]
+        repo = Repo(self, [{'id': 'unit', 'argv': count, 'required': True, 'paths': ['src/*']},
+                           {'id': 'docs', 'argv': OK, 'required': True}])
+        config = json.loads((repo.root / 'docs/config.json').read_text())
+        config['taskLines'] = 5
+        repo.write('docs/config.json', config)
+        repo.write('README.md', 'one\n')
+        repo.commit('docs only')
+        code, out = repo.run('check', '--since', 'HEAD~1')
+        self.assertEqual(code, 0, out)
+        self.assertIn('not run, no changed file matches their paths: unit', out)
+        self.assertFalse((repo.root / 'docs/runs/count.txt').exists())
+        self.assertEqual(repo.run('check', '--since', 'no-such-ref')[0], 0)
+        self.assertTrue((repo.root / 'docs/runs/count.txt').exists(), 'an unknown ref runs every required check')
+        repo.run('add', 'A big change')
+        repo.run('start', 'F001')
+        repo.write('src/big.py', 'line\n' * 12)
+        code, out = repo.run('verify', 'F001')
+        self.assertEqual(code, 0, out)
+        self.assertIn('this task changed 12 lines, over the taskLines limit of 5', out)
+
+    def test_show_finds_referenced_rows_in_any_doc_and_wrapup_leaves_no_shared_state(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK, 'required': True}])
+        repo.write('docs/billing.md', '| ID | Requirement |\n|---|---|\n| R-7 | Totals round half up to cents. |\n')
+        repo.commit('area doc')
+        repo.run('add', 'Round totals', '--ref', 'R-7')
+        self.assertIn('Totals round half up to cents.', repo.run('show', 'F001')[1])
+        before = sorted(path.name for path in (repo.root / 'docs/tasks').iterdir())
+        self.assertEqual(repo.run('wrapup', '--note', 'queued one task')[0], 0)
+        self.assertIn('queued one task', repo.run('status')[1])
+        self.assertEqual(sorted(path.name for path in (repo.root / 'docs/tasks').iterdir()), before)
+        self.assertFalse((repo.root / 'docs/tasks.json').exists())
+
+    def test_three_failed_reviews_send_the_agent_to_the_user(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK, 'required': True}])
+        repo.run('add', 'Risky thing', '--review')
+        repo.run('start', 'F001')
+        repo.write('app.py', 'v1\n')
+        for attempt in range(3):
+            self.assertEqual(repo.run('verify', 'F001')[0], 0)
+            code, out = repo.run('review', 'F001', '--fail', '--summary', f'finding {attempt}')
+            self.assertEqual('stop and ask the user' in out, attempt == 2, out)
+
+    def test_sigterm_stops_the_check_a_wrapup_is_running(self):
+        slow = [PY, '-c', "import os, time; open('docs/runs/pid.txt', 'w').write(str(os.getpid())); time.sleep(30)"]
+        repo = Repo(self, [{'id': 'slow', 'argv': slow, 'wrapup': True}], use_git=False)
+        process = subprocess.Popen([PY, str(repo.root / 'scripts/harness.py'), 'wrapup', '--note', 'x'], cwd=repo.root,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        marker, deadline = repo.root / 'docs/runs/pid.txt', time.time() + 20
+        while not (marker.exists() and marker.read_text()):
+            self.assertLess(time.time(), deadline)
+            time.sleep(0.1)
+        check = int(marker.read_text())
+        self.addCleanup(lambda: subprocess.run(['kill', '-9', str(check)], capture_output=True))
+        process.terminate()
+        process.wait(timeout=10)
+        deadline = time.time() + 5
+        while subprocess.run(['kill', '-0', str(check)], capture_output=True).returncode == 0:
+            self.assertLess(time.time(), deadline, 'the check outlived the harness')
+            time.sleep(0.1)
+
+    def test_show_prints_referenced_project_rows_and_status_states_approval(self):
+        repo = Repo(self, [{'id': 'ok', 'argv': OK, 'required': True}])
+        repo.write('docs/PROJECT.md', '| ID | Requirement |\n|---|---|\n| R-1 | When a total has half a cent, it rounds up. |\n'
+                                      '| R-12 | Another row. |\n')
+        repo.run('add', 'Round totals', '--ref', 'R-1')
+        out = repo.run('show', 'F001')[1]
+        self.assertIn('When a total has half a cent, it rounds up.', out)
+        self.assertNotIn('Another row', out)
+        self.assertIn('ask before commit and push', repo.run('status')[1])
+        config = json.loads((repo.root / 'docs/config.json').read_text())
+        config['delivery']['autoPublish'] = True
+        repo.write('docs/config.json', config)
+        self.assertIn('commit and push need no approval', repo.run('status')[1])
 
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -447,8 +671,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertIn('https://github.test/pull/1', out)
         self.assertEqual(repo.branch(), 'main')
         self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
-        merged = {task['id']: task['state'] for task in json.loads(repo.origin_file('docs/tasks.json'))['tasks']}
-        self.assertEqual(merged, {'F001': 'passing'})
+        self.assertEqual(json.loads(repo.origin_file('docs/tasks/F001.json'))['state'], 'passing')
         self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['feat: Feature file exists (F001)'])
         self.assertIn('the queue is empty', repo.run('status')[1])
 
@@ -464,35 +687,81 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.tasks()['F001']['state'], 'active')
         self.assertIsNone(repo.origin_file('feature.txt'))
 
-    def test_an_unmerged_pull_request_blocks_new_tasks_until_done_merges_it(self):
+    def test_a_pending_pull_request_does_not_block_a_task_that_does_not_depend_on_it(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}, {'id': 'ok', 'argv': OK}],
                           delivery={'mode': 'pr', 'checksWaitSeconds': 0.05})
         repo.env['FAKE_GH_CHECKS'] = 'pending'
         repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
         repo.run('add', 'Second thing', '--accept', 'x', '--check', 'ok')
+        repo.run('add', 'Third thing', '--accept', 'x', '--check', 'ok', '--after', 'F001')
         repo.run('start', 'F001')
         self.finish_work(repo)
         code, out = repo.run('done', 'F001', '--proof', '1=feature: check')
         self.assertEqual(code, 1, out)
         self.assertIn('still running', out)
-        code, out = repo.run('start', 'F002')
-        self.assertEqual(code, 1, out)
-        self.assertIn('F001 is not merged', out)
         self.assertIn('waiting for merge: F001', repo.run('status')[1])
-        subprocess.run(['git', 'switch', '-q', 'main'], cwd=repo.root, check=True)
-        self.assertIn('next: `git switch feat/f001-feature-file-exists`', repo.run('status')[1])
-        subprocess.run(['git', 'switch', '-q', 'feat/f001-feature-file-exists'], cwd=repo.root, check=True)
+        added = subprocess.run(['git', 'diff', '--name-only', 'origin/main...HEAD', '--', 'docs/tasks'], cwd=repo.root,
+                               capture_output=True, text=True).stdout.split()
+        self.assertEqual(added, ['docs/tasks/F001.json'], 'a branch carries only the record of its own task')
         repo.write('feature.txt', 'changed after done\n')
         repo.commit('late change')
         code, out = repo.run('done', 'F001')
         self.assertEqual(code, 1, out)
         self.assertIn('fresh verification', out)
         repo.git('reset', '-q', '--hard', 'HEAD~1')
+        code, out = repo.run('start', 'F003')
+        self.assertEqual(code, 1, out)
+        self.assertIn('waits on F001', out)
+        code, out = repo.run('start', 'F002')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(repo.branch(), 'feat/f002-second-thing')
+        self.assertNotIn('F001', repo.tasks(), 'the pending task stays on its own branch')
+        subprocess.run(['git', 'switch', '-q', 'feat/f001-feature-file-exists'], cwd=repo.root, check=True)
         repo.env['FAKE_GH_CHECKS'] = 'pass'
         code, out = repo.run('done', 'F001')
         self.assertEqual(code, 0, out)
-        self.assertEqual(repo.run('start', 'F002')[0], 0)
-        self.assertEqual(repo.branch(), 'feat/f002-second-thing')
+        self.assertEqual(repo.branch(), 'main')
+
+    def test_a_clone_on_the_base_branch_is_sent_to_the_task_branch(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}], delivery={'mode': 'pr', 'checksWaitSeconds': 0.05})
+        repo.env['FAKE_GH_CHECKS'] = 'pending'
+        repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
+        repo.run('start', 'F001')
+        self.finish_work(repo)
+        repo.run('done', 'F001', '--proof', '1=feature: check')
+        subprocess.run(['git', 'switch', '-q', 'main'], cwd=repo.root, check=True)
+        self.assertIn('next: `git switch feat/f001-feature-file-exists`', repo.run('status')[1])
+
+    def test_two_worktrees_work_in_parallel_and_both_merge(self):
+        repo = RemoteRepo(self, [{'id': 'ok', 'argv': OK, 'required': True}], delivery={'mode': 'pr', 'autoMerge': False})
+        other = Repo.__new__(Repo)
+        other.root, other.env = repo.root.parent / (repo.root.name + '-second'), repo.env
+        self.addCleanup(shutil.rmtree, other.root, ignore_errors=True)
+        repo.git('worktree', 'add', '-q', '--detach', str(other.root), 'main')
+        repo.run('add', 'First thing')
+        self.assertIn('added F002', other.run('add', 'Second thing')[1], 'every worktree sees one queue')
+        self.assertEqual(repo.run('start', 'F001')[0], 0)
+        code, out = other.run('start', 'F002')
+        self.assertEqual(code, 0, out)
+        self.assertIn('in progress in other worktrees: feat/f002-second-thing', repo.run('status')[1])
+        for tree, name in ((repo, 'F001'), (other, 'F002')):
+            tree.write(f'{name}.txt', 'work\n')
+            self.assertEqual(tree.run('verify', name)[0], 0)
+            subprocess.run(['git', 'add', '-A'], cwd=tree.root, check=True)
+            subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', name],
+                           cwd=tree.root, check=True)
+            code, out = tree.run('done', name)
+            self.assertIn('waiting for the owner to merge', out)
+            tree.run('wrapup', '--note', 'pushed; waiting for the merge')
+        merged = repo.root.parent / (repo.root.name + '-merge')
+        self.addCleanup(shutil.rmtree, merged, ignore_errors=True)
+        subprocess.run(['git', 'clone', '-q', str(repo.origin), str(merged)], check=True)
+        for branch in ('feat/f001-first-thing', 'feat/f002-second-thing'):
+            result = subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', 'merge', '-q', '--no-edit',
+                                     f'origin/{branch}'], cwd=merged, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        states = {path.stem: json.loads(path.read_text())['state'] for path in (merged / 'docs/tasks').glob('*.json')}
+        self.assertEqual(states, {'F001': 'passing', 'F002': 'passing'})
 
     def test_merge_counts_only_when_github_reports_it_merged(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
@@ -556,7 +825,7 @@ class DeliveryTest(unittest.TestCase):
         repo.run('add', 'Feature file exists', '--accept', 'feature.txt is present', '--check', 'feature')
         code, out = repo.run('start', 'F001')
         self.assertEqual(code, 1, out)
-        self.assertIn('origin/main has no docs/tasks.json', out)
+        self.assertIn('origin/main has no docs/config.json', out)
         self.assertEqual(repo.branch(), 'main')
         self.assertTrue((repo.root / 'scripts/harness.py').exists())
 
@@ -598,8 +867,8 @@ class BootstrapTest(unittest.TestCase):
         status = subprocess.run([PY, str(self.root / 'scripts/harness.py'), 'status'], capture_output=True, text=True)
         self.assertEqual(status.returncode, 0, status.stderr)
 
-        tasks = self.root / 'docs/tasks.json'
-        tasks.write_text(tasks.read_text().replace('"nextId": 1', '"nextId": 7'))
+        (self.root / 'docs/tasks').mkdir()
+        (self.root / 'docs/tasks/F007.json').write_text('{"id": "F007", "behavior": "kept", "state": "not_started"}')
         before = self.files()
         code, out = bootstrap('install', self.root)
         self.assertEqual(code, 0, out)

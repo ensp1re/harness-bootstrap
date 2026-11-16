@@ -19,10 +19,7 @@ class EvidenceAudit(unittest.TestCase):
             with self.subTest(field=field):
                 repo = self.ready()
                 self.assertEqual(repo.run('verify', 'F001')[0], 0)
-                path = repo.root / 'docs/tasks.json'
-                data = json.loads(path.read_text())
-                data['tasks'][0][field] = value
-                repo.write('docs/tasks.json', data)
+                repo.edit_task('F001', lambda task: task.update({field: value}))
                 self.assertIn('definition changed', repo.run('status')[1])
 
     def test_source_mutation_during_checks_fails(self):
@@ -32,7 +29,7 @@ class EvidenceAudit(unittest.TestCase):
         self.assertEqual(repo.tasks()['F001']['state'], 'active')
 
     def test_task_mutation_during_checks_fails(self):
-        script = "import json; from pathlib import Path; p=Path('docs/tasks.json'); d=json.loads(p.read_text()); d['tasks'][0]['keep']=['src/*']; p.write_text(json.dumps(d))"
+        script = "import json; from pathlib import Path; p=Path('docs/tasks/F001.json'); d=json.loads(p.read_text()); d['keep']=['src/*']; p.write_text(json.dumps(d))"
         repo = self.ready([{'id': 'ok', 'argv': [PY, '-c', script]}])
         self.assertNotEqual(repo.run('verify', 'F001')[0], 0)
 
@@ -105,6 +102,19 @@ class EvidenceAudit(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
 
+class DocsCheck(unittest.TestCase):
+    def test_an_oversized_doc_fails_the_docs_check(self):
+        repo = Repo(self, [])
+        bootstrap('install', repo.root)
+        check = [PY, str(repo.root / 'scripts/check-docs.py')]
+        import subprocess
+        self.assertEqual(subprocess.run(check, capture_output=True).returncode, 0)
+        repo.write('docs/PROJECT.md', '# Project\n' + '| R-1 | a long row |\n' * 4000)
+        result = subprocess.run(check, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('move one area into its own file', result.stdout)
+
+
 class DeliveryAudit(unittest.TestCase):
     def pending(self, mode='pending'):
         repo = RemoteRepo(self, [{'id': 'ok', 'argv': OK}],
@@ -134,13 +144,10 @@ class DeliveryAudit(unittest.TestCase):
                     config = json.loads((repo.root / 'docs/config.json').read_text())
                     config['checks'][0]['argv'] = [PY, '-c', 'raise SystemExit(1)']
                     repo.write('docs/config.json', config)
+                elif change == 'task':
+                    repo.edit_task('F001', lambda task: task.update(keep=['src/*']))
                 else:
-                    data = json.loads((repo.root / 'docs/tasks.json').read_text())
-                    if change == 'task':
-                        data['tasks'][0]['keep'] = ['src/*']
-                    else:
-                        data['tasks'][0]['evidence'].pop('version', None)
-                    repo.write('docs/tasks.json', data)
+                    repo.edit_task('F001', lambda task: task['evidence'].pop('version', None))
                 repo.env['FAKE_GH_CHECKS'] = 'pass'
                 self.assertNotEqual(repo.run('done', 'F001')[0], 0)
                 self.assertEqual(repo.pull_requests()[0]['state'], 'OPEN')
