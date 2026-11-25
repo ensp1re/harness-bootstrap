@@ -546,7 +546,7 @@ if args[:2] == ['pr', 'view']:
 elif args[:2] == ['pr', 'create']:
     options = dict(zip(args[2::2], args[3::2]))
     pr = {'number': len(state['prs']) + 1, 'head': options['--head'], 'base': options['--base'],
-          'title': options['--title'], 'state': 'OPEN'}
+          'title': options['--title'], 'body': open(options['--body-file']).read(), 'state': 'OPEN'}
     pr['url'] = 'https://github.test/pull/%d' % pr['number']
     state['prs'].append(pr)
     save()
@@ -672,8 +672,28 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.branch(), 'main')
         self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
         self.assertEqual(json.loads(repo.origin_file('docs/tasks/F001.json'))['state'], 'passing')
-        self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['feat: Feature file exists (F001)'])
+        self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['add the feature (F001)'])
         self.assertIn('the queue is empty', repo.run('status')[1])
+
+    def test_pull_request_text_comes_from_the_task_commits(self):
+        repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
+        repo.run('add', 'Feature file exists', '--type', 'feat', '--accept', 'feature.txt is present', '--check', 'feature',
+                 '--ref', 'R-1')
+        repo.run('start', 'F001')
+        (repo.root / 'feature.txt').write_text('done\n')
+        self.assertEqual(repo.run('verify', 'F001')[0], 0)
+        repo.commit('feat: add the feature file\n\nReaders needed the file.\nIt now exists.')
+        code, out = repo.run('done', 'F001', '--proof', '1=feature: the file is there, long proof text')
+        self.assertEqual(code, 0, out)
+        pr = repo.pull_requests()[0]
+        self.assertEqual(pr['title'], 'feat: add the feature file (F001)')
+        body = pr['body']
+        self.assertTrue(body.startswith('## Summary\n\nReaders needed the file.\nIt now exists.\n'), body)
+        self.assertIn('- [x] feature.txt is present: `feature`\n', body)
+        self.assertRegex(body, r'Checks passed on [0-9a-f]{7}: feature\.')
+        self.assertIn('Refs: R-1', body)
+        for hidden in ('long proof text', 'chore: mark F001 passing', 'Local verify at'):
+            self.assertNotIn(hidden, body)
 
     def test_failed_checks_return_the_task_to_active_without_merging(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])

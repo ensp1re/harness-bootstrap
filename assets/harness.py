@@ -1613,25 +1613,45 @@ def cmd_done(root, args):
     return deliver(root, task['id'], settings, resumed)
 
 
-def pr_title(task):
+def task_commits(root, base, branch):
+    """(subject, body) of the commits the pull request delivers, oldest first, without the runner's own."""
+    log = git(root, 'log', '--no-merges', '--reverse', '--format=%s%x1f%b%x1e',
+              f'refs/remotes/origin/{base}..refs/heads/{branch}') or ''
+    commits = [entry.strip('\n').split('\x1f', 1) for entry in log.split('\x1e') if entry.strip()]
+    return [(subject, body.strip()) for subject, body in commits if not re.fullmatch(r'chore: mark \S+ passing', subject)]
+
+
+def pr_title(task, commits):
+    if commits:
+        return f'{commits[0][0]} ({task["id"]})'
     return f'{task.get("type") or "feat"}: {task.get("behavior")} ({task["id"]})'
 
 
-def pr_body(task):
+def pr_body(task, commits, head):
+    """Written for the person who reviews and merges: the agent's commit text first, then the evidence in short."""
     evidence = task.get('evidence') or {}
     proof = evidence.get('proof') or {}
-    lines = [f'Task {task["id"]}: {task.get("behavior")}', '', 'Acceptance and what proves it:']
-    lines += [f'{index}. {item}: {proof.get(str(index), "not named")}'
-              for index, item in enumerate(task.get('acceptance') or [], 1)]
-    checks = ', '.join(f'{check.get("id")} {check.get("outcome")}' for check in evidence.get('checks') or [])
-    lines += ['', f'Local verify at {evidence.get("at")}: {checks or "no checks recorded"}']
+    lines = ['## Summary', '', '\n\n'.join(body for _, body in commits if body) or task.get('behavior') or '']
+    if len(commits) > 1:
+        lines += ['', '## Commits', ''] + [f'- {subject}' for subject, _ in commits]
+    if task.get('acceptance'):
+        lines += ['', '## Acceptance', '']
+        for index, item in enumerate(task['acceptance'], 1):
+            named = proof.get(str(index))
+            lines.append(f'- [x] {item}: `{named.split(":", 1)[0].strip()}`' if named else f'- [ ] {item}: no proof named')
+    checks = evidence.get('checks') or []
+    passed = ', '.join(check.get('id') for check in checks if check.get('outcome') == 'passed') or 'none'
+    other = ''.join(f'; {check.get("id")} {check.get("outcome")}' for check in checks if check.get('outcome') != 'passed')
+    lines += ['', '## Verification', '', f'Checks passed on {head[:7]}: {passed}{other}.']
     review = evidence.get('review')
     if review:
-        lines.append(f'Review: {review.get("result")} by {review.get("by")}: {review.get("summary")}')
+        result = {'pass': 'passed', 'fail': 'failed'}.get(review.get('result'), review.get('result'))
+        lines += ['', f'Review {result} by {review.get("by")}.', '', '<details><summary>Review notes</summary>', '',
+                  review.get('summary') or '', '', '</details>']
     if task.get('keep'):
-        lines.append('Must not change: ' + '; '.join(task['keep']))
+        lines += ['', 'Must not change: ' + '; '.join(task['keep'])]
     if task.get('refs'):
-        lines.append('Refs: ' + ', '.join(task['refs']))
+        lines += ['', 'Refs: ' + ', '.join(task['refs'])]
     return '\n'.join(lines) + '\n'
 
 
@@ -1741,8 +1761,9 @@ def deliver(root, task_id, settings, resumed):
     if pr is None or pr.get('state') == 'CLOSED':
         body = root / RUNS / f'{task_id}-pull-request.md'
         body.parent.mkdir(parents=True, exist_ok=True)
-        body.write_text(pr_body(task), encoding='utf-8')
-        created = gh(root, 'pr', 'create', '--base', base, '--head', branch, '--title', pr_title(task),
+        commits = task_commits(root, base, branch)
+        body.write_text(pr_body(task, commits, head), encoding='utf-8')
+        created = gh(root, 'pr', 'create', '--base', base, '--head', branch, '--title', pr_title(task, commits),
                      '--body-file', str(body))
         if created.returncode != 0:
             print(f'could not open a pull request: {(created.stderr or created.stdout).strip()[-400:]}')

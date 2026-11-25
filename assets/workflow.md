@@ -26,6 +26,9 @@ a required review passed, and the change is committed and delivered.
    After a failed review, send the fix to the same reviewer. After three failed reviews, stop and ask the user.
 6. Commit and run `done ID`, with the proof when the task has acceptance lines. `status` says whether commit and push need approval, and who merges.
    PR delivery pushes and opens a PR. Missing CI is pending; skipped, cancelled or failed CI fails.
+   The PR takes its title from the first commit subject and its summary from the commit bodies, so write them for a
+   reader who has not seen the task: subject `type: what changed`, under 70 characters; body says why and what
+   changed, in plain words. Don't repeat acceptance lines or proof; the runner adds them.
    Repeat `done ID` to resume pending delivery or confirm an owner merge.
 7. Before stopping, `wrapup --note "result; next step"`. Fix failures or report what remains.
 
