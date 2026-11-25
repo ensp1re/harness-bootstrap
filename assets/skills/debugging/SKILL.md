@@ -34,7 +34,7 @@ Read the whole error message and stack trace before anything else. They often na
 
 ## 4. Fix
 
-- For a reported bug, write one regression test that reproduces it and see it fail for the expected reason. When a check you already have is failing on your own unfinished work, that check is the signal; add no test.
+- For a reported bug, write one regression test that reproduces it, even when the task has several acceptance lines, and see it fail for the expected reason. When a check you already have is failing on your own unfinished work, that check is the signal; add no test.
 - Fix the cause in the shared place every caller goes through. Check every caller of the function you change.
 - Make the smallest change that fixes the cause. No unrelated cleanup.
 - Run the failing signal (now passing) and the full required checks.

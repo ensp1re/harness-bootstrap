@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKILL_VERSION = '2.3.1'
+SKILL_VERSION = '2.3.2'
 SKILL = Path(__file__).resolve().parents[1]
 START, END = '<!-- harness:start', '<!-- harness:end -->'
 IGNORE_LINES = ('docs/runs/', 'docs/.harness.lock')

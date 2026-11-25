@@ -33,7 +33,8 @@ Check the project's own rules first (AGENTS.md, linters, nearby code), then the 
 - Reuse: does it copy something that already exists?
 - Structure: new code in the wrong module, wrappers that only pass calls through, `utils` dumping grounds, reaching into another module's internals, import cycles, input and output mixed into core logic.
 - A restructure must reduce what a reader has to keep in mind, not just move code around.
-- Tests: do they test behavior through the public interface, and fail when it breaks? Invert one condition the change adds; if the tests still pass, they are weak. Watch for expected values computed with the code's own formula, and for heavy mocking. A missing test is a finding only when the workflow requires one. Too many tests, or tests that repeat each other, is also a finding.
+- Tests: do they test behavior through the public interface, and fail when it breaks? Invert one condition the change adds; if the tests still pass, they are weak. Watch for expected values computed with the code's own formula, and for heavy mocking. A missing test is a finding only when the workflow requires one.
+- Repeated tests: for each test the change adds, name the branch of code it runs. Two new tests on the same branch for the same behavior, at any layer, are **Should fix**: keep the one that shows the acceptance line as written. So is more than one regression test for one bug.
 - Careless code: the list in `writing-code`.
 
 Keep the passes separate in the report.
