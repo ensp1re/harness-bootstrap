@@ -10,8 +10,8 @@ The project workflow (`docs/workflow.md`) decides when a test is needed. This sk
 
 - Behavior through the public interface: what a caller or user can observe. Not private functions, internal calls, or the order of internal steps.
 - A good test fails when the behavior breaks and keeps passing through any refactor that keeps the behavior. A test that breaks on a refactor tests the implementation.
-- How many: one test per acceptance line or reported bug. Add a boundary case (empty, zero, maximum, invalid input) only when the acceptance line or the bug is about it. Don't test every combination of inputs.
-- Before adding a test, look for an existing one that covers the same behavior. Change or extend it instead of adding a near copy.
+- How many: a reported bug gets one regression test, even when its task has several acceptance lines; check the other lines in that same test when they show in the same place. Other work gets one test per acceptance line. Add a boundary case (empty, zero, maximum, invalid input) only when the acceptance line or the bug is about it. Don't test every combination of inputs.
+- Before adding a test, look for one that already covers the behavior, including tests you wrote earlier in this change and tests at other layers (unit, integration, end-to-end). Change or extend it instead of adding a near copy.
 - Not the language, the framework, constants, copied text, or layout.
 
 ## How to write one
@@ -39,4 +39,5 @@ The project workflow (`docs/workflow.md`) decides when a test is needed. This sk
 ## Check the test
 
 - Break the code on purpose: invert a condition or remove a line. If the test still passes, it is weak; fix the test.
+- Before you finish, list the tests this change adds and the branch of code each one runs. When two run the same branch for the same behavior, at any layer, keep the one that shows the acceptance line as written (if both do, the faster one) and delete the other.
 - Run the whole required suite, not only the new test.
