@@ -27,6 +27,14 @@ if not description or len(description) > 1024 or '<' in description or '>' in de
 if len(skill.splitlines()) > 500:
     errors.append('SKILL.md: keep the body under 500 lines')
 
+for path in sorted((root / 'assets/skills').glob('*/SKILL.md')):
+    text = path.read_text(encoding='utf-8')
+    front = re.match(r'^---\nname: (.+)\ndescription: (.+)\n---\n', text)
+    if not front or front.group(1) != path.parent.name:
+        errors.append(f'{path.relative_to(root)}: frontmatter needs name (the folder name) and description')
+    elif len(front.group(2)) > 1024 or '<' in front.group(2) or '>' in front.group(2):
+        errors.append(f'{path.relative_to(root)}: description must be 1-1024 characters without angle brackets')
+
 for name in [str(path.relative_to(root)) for folder in ('assets', 'scripts', 'tests') for path in (root / folder).rglob('*.py')]:
     try:
         compile((root / name).read_text(encoding='utf-8'), name, 'exec')
