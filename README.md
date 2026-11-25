@@ -22,7 +22,7 @@ I want to build a website where neighbours can lend each other tools. Set it up 
 2. **Discover.** Research depth follows uncertainty and stakes: tiers 0–3, each with a search budget and stop rules. The agent asks at most 3 questions, each with a default.
 3. **Define.** The agent writes `docs/PROJECT.md`: users and their jobs, scope, domain terms, and ID'd rows for requirements (Given/When/Then acceptance and a check), decisions, assumptions, and open questions. When research ran, `docs/RESEARCH.md` holds cited, dated facts.
 4. **Plan.** 3–8 small tasks, starting with a walking skeleton that makes every check type pass once.
-5. **Install.** `scripts/bootstrap.py install` copies the runner to `scripts/harness.py`, adds the harness block to `AGENTS.md`, and creates `docs/config.json`. Each task becomes its own file under `docs/tasks/`. Reruns never overwrite edited content.
+5. **Install.** `scripts/bootstrap.py install` copies the runner to `scripts/harness.py` and the coding skills to `.agents/skills/` (linked into `.claude/skills/` with `--claude`), adds the harness block to `AGENTS.md`, and creates `docs/config.json`. Each task becomes its own file under `docs/tasks/`. Reruns never overwrite edited content.
 6. **Deliver and initialize.** A new project gets a private GitHub repository and one direct push of the harness commit. The walking skeleton (F001) then goes through the task loop and a pull request, like every later task.
 7. **Report.** Findings, defaults in use, checks and their baseline, the wrapup result, and the next task.
 
@@ -45,7 +45,7 @@ Requirement: Python 3.8+ where agents and CI run the harness.
 | `SKILL.md` | when the skill triggers |
 | `references/discovery.md` | when the product is not fully defined |
 | `references/harness.md` | when choosing checks, rerunning, migrating, or debugging |
-| `assets/` | never in full: copied (runner, AGENTS block) or filled in (templates) |
+| `assets/` | never in full: copied (runner, AGENTS block, coding skills) or filled in (templates) |
 | `scripts/bootstrap.py` | never: it is run |
 | `tests/`, `docs/evaluation.md`, `docs/design-notes.md` | only when changing this skill |
 

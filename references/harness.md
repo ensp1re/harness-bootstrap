@@ -15,6 +15,8 @@ Read this when choosing checks, rerunning bootstrap, migrating a 1.x project, or
 | `docs/config.json` | agent | Checks, review paths, delivery settings, optional `fingerprintPaths` |
 | `docs/install.json` | `bootstrap.py install` | Hashes of installed content, for safe reruns |
 | `scripts/check-docs.py` | installer | Local Markdown links and canonical decision IDs; included in new check registries |
+| `.agents/skills/*/SKILL.md` | installer, then user | Coding rules agents read before writing, changing, debugging, testing or reviewing code; Codex loads them directly |
+| `.claude/skills/*` | installer with `--claude` | Links to `.agents/skills/*`, because Claude Code reads only `.claude/skills` |
 | `docs/runs/` | runner, gitignored | Logs of checks that did not pass; `events.jsonl`, one line per command with its duration |
 
 ## Task states

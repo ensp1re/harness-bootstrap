@@ -4,7 +4,7 @@
   python3 scripts/bootstrap.py inspect ROOT
   python3 scripts/bootstrap.py install ROOT [--dry-run] [--claude]
 
-install copies assets/harness.py to scripts/harness.py, creates docs/config.json when missing, adds the harness block to AGENTS.md and ignores run logs in .gitignore. It records hashes
+install copies assets/harness.py to scripts/harness.py and assets/skills to .agents/skills, creates docs/config.json when missing, adds the harness block to AGENTS.md and ignores run logs in .gitignore. It records hashes
 of what it wrote in docs/install.json, so a rerun updates only content nobody changed since and reports
 everything else instead of overwriting it.
 """
@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-SKILL_VERSION = '2.2.0'
+SKILL_VERSION = '2.3.0'
 SKILL = Path(__file__).resolve().parents[1]
 START, END = '<!-- harness:start', '<!-- harness:end -->'
 IGNORE_LINES = ('docs/runs/', 'docs/.harness.lock')
@@ -221,9 +221,11 @@ def install(root, dry_run, claude):
                 hashes[key] = recorded[key]
             report.append(('conflict', key))
 
+    skills = sorted(path.parent.name for path in (SKILL / 'assets/skills').glob('*/SKILL.md'))
     # Preflight every destination before any write; symlinks and unreadable user files are conflicts.
     destinations = ('scripts/harness.py', 'scripts/check-docs.py', 'AGENTS.md', 'docs/workflow.md',
-                    'docs/config.json', 'docs/install.json', '.gitignore', 'CLAUDE.md')
+                    'docs/config.json', 'docs/install.json', '.gitignore', 'CLAUDE.md',
+                    *(f'.agents/skills/{name}/SKILL.md' for name in skills))
     for name in destinations:
         path = root / name
         if any(part.is_symlink() for part in (path, *path.parents) if part != root and root in part.parents):
@@ -266,6 +268,28 @@ def install(root, dry_run, claude):
     workflow = (SKILL / 'assets/workflow.md').read_text(encoding='utf-8')
     managed('docs/workflow.md', text_or_none(workflow_path), workflow,
             lambda: write_text(workflow_path, workflow), respect_removal=True)
+
+    for name in skills:
+        key = f'.agents/skills/{name}/SKILL.md'
+        skill_path = root / key
+        skill_text = (SKILL / 'assets/skills' / name / 'SKILL.md').read_text(encoding='utf-8')
+        managed(key, text_or_none(skill_path), skill_text,
+                lambda path=skill_path, text=skill_text: write_text(path, text), respect_removal=True)
+        if not claude or ('left removed', key) in report:
+            continue
+        # Claude Code reads only .claude/skills; a relative link keeps one copy and survives moving the repository.
+        link, target = root / '.claude/skills' / name, root / '.agents/skills' / name
+        if link.exists() or link.is_symlink():
+            same = link.is_symlink() and link.resolve() == target.resolve()
+            report.append(('unchanged' if same else 'conflict', f'.claude/skills/{name}'))
+            continue
+        try:
+            if not dry_run:
+                link.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(os.path.relpath(target, link.parent), link, target_is_directory=True)
+            report.append(('created', f'.claude/skills/{name}'))
+        except OSError as error:  # Windows without symlink permission
+            report.append(('conflict', f'.claude/skills/{name} (cannot create the link: {error})'))
 
     remote_head = run(root, 'git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD') or ''
     base = remote_head.split('/', 1)[1] if '/' in remote_head else (run(root, 'git', 'branch', '--show-current') or 'main')
@@ -318,7 +342,8 @@ def main(argv=None):
     item = sub.add_parser('install', help='install or update harness files')
     item.add_argument('root', type=Path)
     item.add_argument('--dry-run', action='store_true', help='report what would change without writing')
-    item.add_argument('--claude', action='store_true', help='also create CLAUDE.md importing AGENTS.md when missing')
+    item.add_argument('--claude', action='store_true',
+                      help='also create CLAUDE.md importing AGENTS.md when missing, and link the skills into .claude/skills')
     args = parser.parse_args(argv)
     root = args.root.resolve()
     if not root.is_dir():

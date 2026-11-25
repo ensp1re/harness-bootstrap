@@ -6,7 +6,7 @@ description: Turn a project idea, a written spec, or an existing repository into
 
 The result: a fresh agent session in the repository runs one command, learns what to do next, finishes one task end to end with proof, delivers it through a pull request, with merge authorization kept separate, and leaves state the next session can trust. Bootstrap ends with the project defined, the harness installed and delivered, a new project initialized, and the next tasks queued. Build product features only if the user asked for that as well.
 
-A bootstrapped repository gets: `AGENTS.md` (project notes plus the harness block), `docs/PROJECT.md`, `docs/RESEARCH.md` when research ran, `docs/tasks/` (one file per task), `docs/config.json` and `docs/workflow.md`, and the runner `scripts/harness.py`. Details: [references/harness.md](references/harness.md).
+A bootstrapped repository gets: `AGENTS.md` (project notes plus the harness block), `docs/PROJECT.md`, `docs/RESEARCH.md` when research ran, `docs/tasks/` (one file per task), `docs/config.json` and `docs/workflow.md`, the runner `scripts/harness.py`, and coding skills in `.agents/skills/` (with `--claude`, linked into `.claude/skills/`). Details: [references/harness.md](references/harness.md).
 
 `<skill>` below means the directory that contains this file.
 
@@ -59,7 +59,7 @@ Commit and publish only within the user’s authorization. Creating a repository
 - **New project, or no GitHub remote yet, with repository creation and push authorized:**
   ```sh
   git init -b main                                      # only when there is no repository yet
-  git add AGENTS.md docs scripts/harness.py .gitignore   # plus CLAUDE.md when created
+  git add AGENTS.md docs scripts/harness.py .agents .gitignore   # plus CLAUDE.md and .claude/skills when created
   git commit -m "chore: add agent harness"
   HARNESS_BASE_PUSH=1 gh repo create <folder name> --private --source . --remote origin --push
   ```
@@ -67,7 +67,7 @@ Commit and publish only within the user’s authorization. Creating a repository
 - **Existing repository with an origin base branch:** deliver the harness through a pull request:
   ```sh
   git switch -c chore/agent-harness
-  git add AGENTS.md docs scripts/harness.py .gitignore   # plus CLAUDE.md when created
+  git add AGENTS.md docs scripts/harness.py .agents .gitignore   # plus CLAUDE.md and .claude/skills when created
   git commit -m "chore: add agent harness"
   git push -u origin chore/agent-harness
   gh pr create --base <base> --title "chore: add agent harness" --body "<what bootstrap set up>"

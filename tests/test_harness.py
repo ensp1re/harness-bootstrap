@@ -883,6 +883,38 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn('conflict: AGENTS.md#harness', out)
         self.assertIn('first in every session', (self.root / 'AGENTS.md').read_text())
 
+    def test_install_copies_coding_skills_and_links_them_for_claude(self):
+        own = self.root / '.claude/skills/writing-code'
+        own.mkdir(parents=True)
+        (own / 'SKILL.md').write_text('own skill\n')
+        code, out = bootstrap('install', self.root, '--claude')
+        self.assertEqual(code, 1, out)
+        self.assertIn('conflict: .claude/skills/writing-code', out)
+        self.assertEqual((own / 'SKILL.md').read_text(), 'own skill\n')
+        self.assertIn('.agents/skills/', (self.root / 'AGENTS.md').read_text())
+        skills = sorted((SKILL / 'assets/skills').glob('*/SKILL.md'))
+        self.assertGreater(len(skills), 1)
+        for source in skills:
+            name = source.parent.name
+            self.assertEqual((self.root / '.agents/skills' / name / 'SKILL.md').read_text(), source.read_text())
+            if name != 'writing-code':
+                link = self.root / '.claude/skills' / name
+                self.assertTrue(link.is_symlink(), name)
+                self.assertEqual((link / 'SKILL.md').read_text(), source.read_text())
+
+        shutil.rmtree(own)
+        code, out = bootstrap('install', self.root, '--claude')
+        self.assertEqual(code, 0, out)
+        self.assertIn('created: .claude/skills/writing-code', out)
+        self.assertIn('unchanged: .claude/skills/debugging', out)
+
+        installed = self.root / '.agents/skills/debugging/SKILL.md'
+        installed.write_text('edited by the team\n')
+        code, out = bootstrap('install', self.root, '--claude')
+        self.assertEqual(code, 1, out)
+        self.assertIn('conflict: .agents/skills/debugging/SKILL.md', out)
+        self.assertEqual(installed.read_text(), 'edited by the team\n')
+
     def test_runner_is_updated_only_when_unchanged_since_install(self):
         import hashlib
         old = '# runner from an older skill version\n'
