@@ -825,9 +825,23 @@ def refresh(state):
         state.forget_base()
 
 
+STOP_WORDS = frozenset({'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'to', 'of', 'in', 'on', 'for', 'with',
+                        'and', 'or', 'gets', 'get', 'has', 'have', 'that', 'this', 'it', 'its', 's'})
+
+
 def branch_name(task):
-    slug = re.sub(r'[^a-z0-9]+', '-', str(task.get('behavior') or '').lower()).strip('-') or 'task'
-    return f'{task.get("type") or "feat"}/{str(task.get("id")).lower()}-{slug}'
+    raw_words = re.findall(r'[a-z0-9]+', str(task.get('behavior') or '').lower())
+    slug = '-'.join(raw_words)
+    if len(slug) > 32:
+        words = [w for w in raw_words if w not in STOP_WORDS] or raw_words
+        picked = []
+        for word in words[:3]:
+            candidate = '-'.join(picked + [word])
+            if picked and len(candidate) > 32:
+                break
+            picked.append(word)
+        slug = '-'.join(picked)
+    return f'{task.get("type") or "feat"}/{str(task.get("id")).lower()}-{slug or "task"}'
 
 
 def branches_elsewhere(state):
@@ -1622,36 +1636,25 @@ def task_commits(root, base, branch):
 
 
 def pr_title(task, commits):
-    if commits:
-        return f'{commits[0][0]} ({task["id"]})'
-    return f'{task.get("type") or "feat"}: {task.get("behavior")} ({task["id"]})'
+    title = commits[0][0] if commits else f'{task.get("type") or "feat"}: {task.get("behavior") or task["id"]}'
+    return shorten(title, 72)
 
 
 def pr_body(task, commits, head):
-    """Written for the person who reviews and merges: the agent's commit text first, then the evidence in short."""
-    evidence = task.get('evidence') or {}
-    proof = evidence.get('proof') or {}
-    lines = ['## Summary', '', '\n\n'.join(body for _, body in commits if body) or task.get('behavior') or '']
+    """Concise pull request description: summary from commit bodies, plus a short test plan."""
+    summary = '\n\n'.join(body for _, body in commits if body) or shorten(task.get('behavior') or '', 200)
+    lines = ['## Summary', '', summary]
     if len(commits) > 1:
-        lines += ['', '## Commits', ''] + [f'- {subject}' for subject, _ in commits]
-    if task.get('acceptance'):
-        lines += ['', '## Acceptance', '']
-        for index, item in enumerate(task['acceptance'], 1):
-            named = proof.get(str(index))
-            lines.append(f'- [x] {item}: `{named.split(":", 1)[0].strip()}`' if named else f'- [ ] {item}: no proof named')
-    checks = evidence.get('checks') or []
-    passed = ', '.join(check.get('id') for check in checks if check.get('outcome') == 'passed') or 'none'
-    other = ''.join(f'; {check.get("id")} {check.get("outcome")}' for check in checks if check.get('outcome') != 'passed')
-    lines += ['', '## Verification', '', f'Checks passed on {head[:7]}: {passed}{other}.']
-    review = evidence.get('review')
-    if review:
-        result = {'pass': 'passed', 'fail': 'failed'}.get(review.get('result'), review.get('result'))
-        lines += ['', f'Review {result} by {review.get("by")}.', '', '<details><summary>Review notes</summary>', '',
-                  review.get('summary') or '', '', '</details>']
-    if task.get('keep'):
-        lines += ['', 'Must not change: ' + '; '.join(task['keep'])]
-    if task.get('refs'):
-        lines += ['', 'Refs: ' + ', '.join(task['refs'])]
+        lines += ['', '## Changes', ''] + [f'- {subject}' for subject, _ in commits]
+    checks = (task.get('evidence') or {}).get('checks') or []
+    passed = [check.get('id') for check in checks if check.get('outcome') == 'passed']
+    failed = [f'{check.get("id")} ({check.get("outcome")})' for check in checks if check.get('outcome') != 'passed']
+    if passed or failed:
+        lines += ['', '## Test plan', '']
+        if passed:
+            lines.append(f'- [x] `{"`, `".join(passed)}` passed (`{head[:7]}`)')
+        for item in failed:
+            lines.append(f'- [ ] {item}')
     return '\n'.join(lines) + '\n'
 
 

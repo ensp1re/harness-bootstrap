@@ -88,7 +88,7 @@ With pull requests:
 - **`verify` and `done`:** refuse on any branch except the task's own.
 - **`done`:**
   1. records the task as passing in a commit on the branch, and pushes;
-  2. opens the pull request, or finds the open one. Its title is the first task commit's subject plus the task id; its body is the commit bodies, then the acceptance lines with the check that proves each, the checks that passed on the pushed commit, and the review notes folded;
+  2. opens the pull request, or finds the open one. Its title is the first task commit's subject (capped at 72 characters); its body is the commit bodies, optional commit list when there are several, and a short test plan with the checks that passed;
   3. waits for the checks, at most `checksWaitSeconds` per call, so it ends before the 2-minute command limit many agent tools have;
   4. waits for the owner to merge; only explicitly authorized `autoMerge: true` requests merge with `--match-head-commit`;
   5. reads the pull request back from GitHub and counts it merged only when GitHub says so;

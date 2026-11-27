@@ -672,27 +672,28 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(repo.branch(), 'main')
         self.assertEqual(repo.origin_file('feature.txt'), 'done\n')
         self.assertEqual(json.loads(repo.origin_file('docs/tasks/F001.json'))['state'], 'passing')
-        self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['add the feature (F001)'])
+        self.assertEqual([pr['title'] for pr in repo.pull_requests()], ['add the feature'])
         self.assertIn('the queue is empty', repo.run('status')[1])
 
-    def test_pull_request_text_comes_from_the_task_commits(self):
+    def test_pull_request_text_and_branch_are_concise(self):
         repo = RemoteRepo(self, [{'id': 'feature', 'argv': FEATURE}])
-        repo.run('add', 'Feature file exists', '--type', 'feat', '--accept', 'feature.txt is present', '--check', 'feature',
+        long_behavior = ('The website gets the redesign feedback: simpler header, search dialog, compact numbers, '
+                         'dashboard layout, shared controls, real skeletons, shorter copy, and working mobile layouts')
+        repo.run('add', long_behavior, '--type', 'fix', '--accept', 'feature.txt is present', '--check', 'feature',
                  '--ref', 'R-1')
         repo.run('start', 'F001')
+        self.assertEqual(repo.branch(), 'fix/f001-website-redesign-feedback')
         (repo.root / 'feature.txt').write_text('done\n')
         self.assertEqual(repo.run('verify', 'F001')[0], 0)
-        repo.commit('feat: add the feature file\n\nReaders needed the file.\nIt now exists.')
+        repo.commit('fix: simplify header and mobile dashboard layout\n\nReaders needed a shorter layout.\nIt now fits mobile screens.')
         code, out = repo.run('done', 'F001', '--proof', '1=feature: the file is there, long proof text')
         self.assertEqual(code, 0, out)
         pr = repo.pull_requests()[0]
-        self.assertEqual(pr['title'], 'feat: add the feature file (F001)')
+        self.assertEqual(pr['title'], 'fix: simplify header and mobile dashboard layout')
         body = pr['body']
-        self.assertTrue(body.startswith('## Summary\n\nReaders needed the file.\nIt now exists.\n'), body)
-        self.assertIn('- [x] feature.txt is present: `feature`\n', body)
-        self.assertRegex(body, r'Checks passed on [0-9a-f]{7}: feature\.')
-        self.assertIn('Refs: R-1', body)
-        for hidden in ('long proof text', 'chore: mark F001 passing', 'Local verify at'):
+        self.assertTrue(body.startswith('## Summary\n\nReaders needed a shorter layout.\nIt now fits mobile screens.\n'), body)
+        self.assertIn('## Test plan\n\n- [x] `feature` passed (', body)
+        for hidden in ('long proof text', 'chore: mark F001 passing', 'Local verify at', '## Acceptance', 'Refs: R-1', 'Review notes'):
             self.assertNotIn(hidden, body)
 
     def test_failed_checks_return_the_task_to_active_without_merging(self):
